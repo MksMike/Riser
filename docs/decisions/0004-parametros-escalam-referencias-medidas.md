@@ -54,6 +54,44 @@ Regra geral, para quando o padrão reaparecer:
 - A referência medida é logada junto com a leitura. Sem isso, o parâmetro
   efetivo de uma operação passada não é reconstituível.
 
+## Correção durante a redação
+
+A primeira formulação desta decisão usava o campo `base` como referência:
+
+```
+degrau = k × base
+```
+
+Falha dimensionalmente. `base` é a mediana móvel de `value_bruto`, que compõe
+componentes já normalizados para 0..1 — é adimensional. O produto `k × base`
+é adimensional e estava a ser tratado como distância de preço.
+
+O erro foi corrigido antes de qualquer implementação, trocando a referência
+para `base_rg_usd_oz(m)`: a mediana do componente `rg` **bruto**, guardada
+antes da normalização, em USD por onça.
+
+Registado aqui porque é a parte que dá para errar de novo, e porque revela um
+limite do próprio padrão:
+
+**Escalar uma referência medida não protege sozinho. A referência precisa estar
+na unidade certa — e uma referência normalizada deixa de estar.**
+
+Normalizar é justamente destruir a unidade. Um campo que passou por
+normalização parece uma quantidade medida, tem procedência de quantidade
+medida, e satisfaz a leitura superficial do padrão. Não serve para dimensionar
+nada físico.
+
+Ao aplicar este padrão, a pergunta de verificação não é "isto foi medido?" mas
+**"em que unidade isto está, e a conta fecha?"**. Se o parâmetro é adimensional
+por construção, a referência tem de carregar a unidade inteira do resultado.
+
+Este modo de falha não produz exceção nem valor absurdo: produz um número
+plausível, sistematicamente errado, que muda de significado a cada alteração na
+composição dos componentes — e que a normalização por horário mascara até a
+comparação cross-feed. Passa em teste unitário. Aparece em dinheiro real.
+
+O critério 8 do SVC existe por causa disto.
+
 ## Consequências
 
 Fica mais fácil: levar o sistema a uma corretora nova. Não há recalibração — a

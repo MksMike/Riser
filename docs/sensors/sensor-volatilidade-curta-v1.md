@@ -219,10 +219,32 @@ O sensor só passa a `v1.0.0` estável quando **todos** forem cumpridos e os nú
 | 5 | Custo por atualização | ≤ 200 µs |
 | 6 | Paridade Python ↔ MQL5 sobre a mesma amostra de ticks | \|Δvalue\| ≤ 1e-4 |
 | 7 | Robustez cross-feed: critérios 1–4 mantidos em Exness **e** Dukascopy | ambos |
+| 8 | Estabilidade cross-feed da referência de dimensionamento: coeficiente de variação de `base_rg(A) ÷ base_rg(B)` ao longo das 24 h, comparado no mesmo minuto do dia | CV < 0,15 |
 
 O critério 7 é o mais severo e o mais importante. Um sensor que só funciona num feed está a ler artefacto do feed, não o mercado.
 
-Os alvos numéricos são propostas iniciais. Devem ser fixados **antes** da primeira execução da Etapa A e não podem ser afrouxados depois para acomodar um resultado.
+### Por que o critério 8 existe separado do 7
+
+O critério 7 mede que **o sensor** transfere entre feeds. Nenhum critério mede
+que a **distância derivada dele** transfere — e desde que o degrau do trailing
+passou a ser `k × base_rg` (secção 5, ADR 0004), essa distância é um produto do
+sensor tanto quanto o `value`.
+
+`base_rg` é exatamente onde a corretora entra. Spread, filtragem de tick e
+granularidade de preço afetam o range medido, e afetam-no de forma diferente ao
+longo do dia: um feed que filtra ticks agressivamente perde mais amplitude na
+sessão de Ásia, onde os ticks são escassos, do que na abertura de Londres.
+
+Por isso o alvo **não** é que a razão seja 1,0. Feeds medem ranges diferentes, e
+isso é esperado e inofensivo — um `k` calibrado absorve uma razão constante. O
+que não é inofensivo é a razão **variar por horário**: aí o degrau do trailing
+muda de significado conforme a sessão, sem que nada no código o declare. É a
+mesma classe de falha silenciosa que a ADR 0004 registou, e é invisível na
+leitura do `value`, porque a normalização por horário a esconde.
+
+Daí o critério ser sobre coeficiente de variação, não sobre nível.
+
+Os alvos numéricos são propostas iniciais. Devem ser fixados **antes** da primeira execução da Etapa A e não podem ser afrouxados depois para acomodar um resultado. O alvo do critério 8 está fixado: CV < 0,15.
 
 ---
 
