@@ -61,6 +61,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
@@ -86,6 +87,12 @@ from riser.data.ticks import (
 )
 
 ETAPAS = ("download", "completude", "parse", "aggregate", "validate")
+
+# Batimento repassado a cada etapa. Todas o aceitam para que a tabela de
+# despacho continue homogenea; so as demoradas o usam. Uma etapa que percorre
+# milhares de unidades sem dar sinal de vida e indistinguivel de uma travada, e
+# a unica alternativa seria comparar timestamp de arquivo a mao.
+Batimento = Callable[[dict], None] | None
 
 # Teto de passadas do laco de convergencia do download. Existe para que o laco
 # nao vire uma forma elegante de nunca terminar quando a rede esta ruim.
@@ -326,10 +333,18 @@ class Progresso:
     e o disco.
     """
 
+    # Intervalo minimo entre escritas do batimento. Sem ele, um mes de 744
+    # arquivos horarios geraria 744 pares temporario+rename, e dois anos
+    # dezassete mil — muito I/O para um arquivo que ninguem le a essa
+    # frequencia. Com ele, quem observa de fora ve o arquivo mexer a cada poucos
+    # segundos, que e resolucao de sobra para distinguir lento de travado.
+    BATIMENTO_S = 5.0
+
     def __init__(self, instrumento: str, etapa: str, total: int, *, root: Path | None = None) -> None:
         base = (root or data_root()) / "state" / instrumento
         base.mkdir(parents=True, exist_ok=True)
         self.path = base / f"{etapa}.json"
+        self._ultimo_batimento = 0.0
         self.dados = {
             "instrumento": instrumento,
             "etapa": etapa,
@@ -338,6 +353,7 @@ class Progresso:
             "total_meses": total,
             "concluidos": 0,
             "mes_atual": None,
+            "unidade_atual": None,
             "encerrado": False,
             "interrompido": False,
             "meses": {},
@@ -353,14 +369,35 @@ class Progresso:
         )
         tmp.replace(self.path)
 
+    def bater(self, estado: dict, *, forcar: bool = False) -> None:
+        """Batimento DENTRO de um mes, para que parado se distinga de lento.
+
+        Sem isto, `atualizado_utc` so mexia ao trocar de mes. Num mes de 744
+        arquivos horarios o arquivo ficava congelado por horas, e a unica forma
+        de saber se a corrida tinha travado era comparar timestamp de `.bi5` a
+        mao. Em dois anos isso deixa de ser viavel — e foi exatamente a duvida
+        que apareceu quando um processo orfao ficou a segurar a trava.
+
+        Estrangulado por tempo, nao por contagem: o que interessa a quem observa
+        e "mexeu nos ultimos N segundos", e isso nao depende de quantas unidades
+        couberam no intervalo.
+        """
+        self.dados["unidade_atual"] = estado
+        agora = time.monotonic()
+        if forcar or agora - self._ultimo_batimento >= self.BATIMENTO_S:
+            self._ultimo_batimento = agora
+            self.gravar()
+
     def comecou(self, ano: int, mes: int) -> None:
         self.dados["mes_atual"] = f"{ano:04d}-{mes:02d}"
+        self.dados["unidade_atual"] = None
         self.gravar()
 
     def terminou(self, ano: int, mes: int, resultado: dict) -> None:
         self.dados["meses"][f"{ano:04d}-{mes:02d}"] = resultado
         self.dados["concluidos"] += 1
         self.dados["mes_atual"] = None
+        self.dados["unidade_atual"] = None
         self.gravar()
 
     def fim(self, *, interrompido: bool) -> None:
@@ -505,7 +542,7 @@ def completude(instrumento: str, ano: int, mes: int, *, root: Path | None = None
     }
 
 
-def etapa_completude(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool) -> dict:
+def etapa_completude(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool, bater: Batimento = None) -> dict:
     """Grava o relatorio de completude. Sem isto, 'quais meses estao
     incompletos' exigiria reprocessar dois anos para descobrir."""
     r = completude(instrumento, ano, mes)
@@ -521,7 +558,7 @@ def etapa_completude(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, 
             "total": r["total"], "relatorio": str(dest)}
 
 
-def etapa_download(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool) -> dict:
+def etapa_download(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool, bater: Batimento = None) -> dict:
     """Baixa o mes ate CONVERGIR, nao uma vez.
 
     Uma passada pode nao fechar um mes: arquivo horario que esgota as tentativas
@@ -561,7 +598,10 @@ def etapa_download(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, fo
             motivo = "convergiu"
             break
 
-        t = download_month(instrumento, ano, mes, logger=log, progress=True)
+        t = download_month(
+            instrumento, ano, mes, logger=log, progress=True,
+            on_unit=(lambda e, p=passada: bater({"passada": p, **e})) if bater else None,
+        )
         depois = completude(instrumento, ano, mes)["total"]["falhou"]
         resolvidas = antes - depois
         historico.append({"passada": passada, "tally": t,
@@ -587,7 +627,7 @@ def etapa_download(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, fo
             "passadas": len(historico), "relatorio": str(dest)}
 
 
-def etapa_parse(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool) -> dict:
+def etapa_parse(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool, bater: Batimento = None) -> dict:
     p = parquet_path(instrumento, ano, mes)
     if p.exists() and not force:
         return {"estado": "ja_existe", "arquivo": str(p)}
@@ -615,7 +655,7 @@ def etapa_parse(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force
     return {"estado": "parseado", "ticks": n, "arquivo": str(caminho), "relatorio": str(rel)}
 
 
-def etapa_aggregate(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool) -> dict:
+def etapa_aggregate(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool, bater: Batimento = None) -> dict:
     faltando = [
         tf for tf in TIMEFRAMES
         if not bars_path(instrumento, tf, ano, mes).exists()
@@ -636,7 +676,7 @@ def etapa_aggregate(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, f
     return {"estado": "agregado", "barras": saida}
 
 
-def etapa_validate(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool) -> dict:
+def etapa_validate(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool, bater: Batimento = None) -> dict:
     """Compara o M1 agregado com o M1 publicado pela Dukascopy.
 
     Passa pelo portao de `exigir_comparacao()`: divergencia zero sem rotulo em
@@ -725,7 +765,7 @@ def rodar(
             print(f"\n[{n}/{len(meses)}] {etapa} {instrumento} {rotulo}", flush=True)
             prog.comecou(ano, mes)
             try:
-                r = fn(instrumento, ano, mes, log, force=force)
+                r = fn(instrumento, ano, mes, log, force=force, bater=prog.bater)
             except Exception as exc:  # noqa: BLE001
                 # Um mes que falha nao custa os outros; o desfecho fica gravado
                 # no progresso e o codigo de saida final denuncia.

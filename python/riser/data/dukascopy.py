@@ -27,7 +27,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import yaml
 
@@ -359,12 +359,19 @@ def download_range(
     root: Path | None = None,
     logger: JsonlLogger | None = None,
     progress: bool = True,
+    on_unit: Callable[[dict], None] | None = None,
 ) -> dict[str, int]:
     """Baixa os arquivos horarios de [start, end), em ordem cronologica reversa.
 
     Devolve a contagem por desfecho. Nao levanta ao fim de uma hora que falhou
     depois de todas as tentativas: registra, conta e segue — uma hora
     inalcancavel nao deve custar as outras milhares.
+
+    `on_unit` e chamado depois de CADA arquivo horario, com o estado corrente.
+    Existe para que quem observa de fora consiga distinguir "a correr devagar"
+    de "travado" sem inspecionar timestamp de arquivo a mao: em dezassete mil
+    arquivos isso deixa de ser possivel. Quem recebe o callback decide a
+    frequencia com que persiste — aqui ele e chamado sempre, e barato.
     """
     cfg = cfg or FeedConfig.load()
     limiter = RateLimiter(cfg.min_interval_s)
@@ -426,6 +433,16 @@ def download_range(
         # Skip nao consome rede, entao nao entra na estimativa.
         if desfecho not in ("ja_tinha", "ja_ausente"):
             pendentes -= 1
+
+        if on_unit is not None:
+            on_unit({
+                "unidade": marca.isoformat(),
+                "desfecho": desfecho,
+                "feitos": n,
+                "total": total,
+                "pendentes": pendentes,
+                "tally": dict(tally),
+            })
 
         if progress and (n % 25 == 0 or n == total or desfecho == "erro"):
             pct = 100.0 * n / total if total else 100.0

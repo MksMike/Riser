@@ -41,6 +41,23 @@ source:
 # trava por instrumento e etapa em riser/data/pipeline.py; a taxa de falha
 # medida naquele periodo NAO descreve o regime serial e nao serve para
 # dimensionar corrida nenhuma.
+#
+# POR QUE O DIAGNOSTICO ERRADO SOBREVIVEU TANTO TEMPO — vale mais que o numero.
+# Enquanto as duas corridas coexistiam, a explicacao corrente era "a Dukascopy
+# limita por volume acumulado, e por isso degrada ao longo da corrida". Ela
+# explicava TUDO o que se via: os 503 crescentes, o ritmo caindo de 12s para 33s
+# por arquivo, a taxa de retry subindo de 0.7 para 0.86. Nenhuma observacao a
+# contradizia, e por isso ela passou a dimensionar decisoes — inclusive uma
+# recomendacao de desacelerar a corrida de dois anos.
+#
+# Ela nao caiu por analise. Caiu quando um processo orfao apareceu numa listagem
+# de PIDs, por acaso.
+#
+# A licao nao e sobre este feed: **diagnostico que explica o sintoma nao e o
+# mesmo que diagnostico correto**. Ajuste bem a uma serie e evidencia fraca
+# quando nao se procurou a causa alternativa. Antes de dimensionar qualquer
+# coisa sobre uma explicacao de degradacao, verifique primeiro o que esta a
+# correr na maquina — e uma verificacao de segundos que teria poupado horas.
 politeness:
   min_interval_s: 4.0
   max_retries: 5

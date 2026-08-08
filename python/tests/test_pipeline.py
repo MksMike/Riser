@@ -181,6 +181,74 @@ def test_progresso_e_json_valido_a_cada_passo(data_root):
     assert json.loads(p.path.read_text(encoding="utf-8"))["encerrado"] is True
 
 
+def test_batimento_mexe_no_arquivo_dentro_de_um_mes(data_root, monkeypatch):
+    """Sem batimento, `atualizado_utc` so muda ao trocar de mes.
+
+    Num mes de 744 arquivos horarios o progresso ficava congelado por horas, e a
+    unica forma de saber se a corrida travou era comparar timestamp de `.bi5` a
+    mao. Em dois anos isso deixa de ser viavel.
+    """
+    p = Progresso("XAUUSD", "download", 1, root=data_root)
+    p.comecou(2026, 7)
+    antes = json.loads(p.path.read_text(encoding="utf-8"))["atualizado_utc"]
+
+    monkeypatch.setattr(p, "_ultimo_batimento", 0.0)
+    p.bater({"unidade": "2026-07-31T23:00:00+00:00", "feitos": 3, "pendentes": 741},
+            forcar=True)
+
+    d = json.loads(p.path.read_text(encoding="utf-8"))
+    assert d["atualizado_utc"] != antes, "o batimento tem de mexer no arquivo"
+    assert d["unidade_atual"]["feitos"] == 3
+    assert d["unidade_atual"]["pendentes"] == 741
+    assert d["mes_atual"] == "2026-07", "batimento nao pode perder o contexto do mes"
+
+
+def test_batimento_e_estrangulado_por_tempo(data_root):
+    """744 pares temporario+rename por mes seria I/O gratuito."""
+    p = Progresso("XAUUSD", "download", 1, root=data_root)
+    p.comecou(2026, 7)
+    p.bater({"feitos": 1}, forcar=True)
+    marca = json.loads(p.path.read_text(encoding="utf-8"))["atualizado_utc"]
+
+    for i in range(2, 60):
+        p.bater({"feitos": i})  # sem forcar: dentro da janela, nao grava
+
+    d = json.loads(p.path.read_text(encoding="utf-8"))
+    assert d["atualizado_utc"] == marca, "gravou mais vezes do que o limite permite"
+    assert p.dados["unidade_atual"]["feitos"] == 59, "o estado em memoria acompanha"
+
+
+def test_batimento_limpo_ao_terminar_o_mes(data_root):
+    p = Progresso("XAUUSD", "download", 1, root=data_root)
+    p.comecou(2026, 7)
+    p.bater({"feitos": 10}, forcar=True)
+    p.terminou(2026, 7, {"estado": "convergiu"})
+    d = json.loads(p.path.read_text(encoding="utf-8"))
+    assert d["unidade_atual"] is None, "unidade de um mes fechado seria leitura velha"
+
+
+def test_download_repassa_batimento_por_arquivo_horario(raiz_bruta, monkeypatch):
+    """A etapa tem de LIGAR o batimento ao downloader, nao so aceita-lo."""
+    batidas = []
+
+    def fake(instr, ano, mes, **k):
+        on_unit = k.get("on_unit")
+        assert on_unit is not None, "etapa_download nao passou on_unit"
+        on_unit({"unidade": "x", "desfecho": "ok", "feitos": 1,
+                 "total": 672, "pendentes": 671, "tally": {}})
+        _preencher(raiz_bruta, ano, mes, 672)
+        return {"ok": 672, "empty": 0, "absent": 0, "ja_tinha": 0,
+                "ja_ausente": 0, "erro": 0}
+
+    monkeypatch.setattr("riser.data.pipeline.download_month", fake)
+    etapa_download("XAUUSD", 2026, 2, LogFalso(), force=False,
+                   bater=lambda e: batidas.append(e))
+
+    assert batidas, "nenhuma batida chegou ao progresso"
+    assert batidas[0]["passada"] == 1, "a batida tem de dizer em que passada esta"
+    assert batidas[0]["pendentes"] == 671
+
+
 def test_progresso_nao_deixa_arquivo_part_para_tras(data_root):
     p = Progresso("XAUUSD", "download", 1, root=data_root)
     p.terminou(2026, 7, {"estado": "ok"})
@@ -224,7 +292,9 @@ def test_interrupcao_para_entre_meses_sem_comecar_o_seguinte(data_root, monkeypa
     monkeypatch.setitem(
         __import__("riser.data.pipeline", fromlist=["ETAPA_FN"]).ETAPA_FN,
         "parse",
-        lambda instr, ano, mes, log, *, force: (vistos.append((ano, mes)), {"estado": "ok"})[1],
+        lambda instr, ano, mes, log, *, force, bater=None: (
+            vistos.append((ano, mes)), {"estado": "ok"}
+        )[1],
     )
     monkeypatch.setattr("riser.data.pipeline.Interrupcao", SinalNoSegundo)
 
@@ -256,7 +326,7 @@ def test_interrupcao_deixa_o_progresso_marcado(data_root, monkeypatch):
 def test_mes_que_falha_nao_custa_os_outros(data_root):
     import riser.data.pipeline as pipe
 
-    def fake(instr, ano, mes, log, *, force):
+    def fake(instr, ano, mes, log, *, force, bater=None):
         if mes == 7:
             raise RuntimeError("estourou")
         return {"estado": "ok"}
