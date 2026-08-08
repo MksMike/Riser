@@ -96,7 +96,7 @@ problemas de corretora nova — o arquivo diz uma coisa, o servidor faz outra.
  "ver":"1.0.0","symbol":"XAUUSDm","acct":"standard",
  "source":"live","value":0.72,"state":"EXPANDING","dq":0.61,"conf":0.90,
  "fresh_ms":180,"c":{"tr":0.81,"rg":0.68,"dsp":0.44,"er":0.61,"spr":0.55,
- "atr":0.49},"base":0.31,"lat_us":142}
+ "atr":0.49},"base":0.31,"base_rg":0.42,"lat_us":142}
 ```
 
 `c` sempre presente. Logar só `value` torna impossível diagnosticar qual

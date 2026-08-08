@@ -56,7 +56,7 @@ Cada componente é normalizado para 0..1 antes de entrar na composição.
 | ID | Nome | Definição | Papel |
 |---|---|---|---|
 | `tr` | Taxa de ticks | contagem de ticks na janela W | atividade / fluxo |
-| `rg` | Range | (max − min) na janela W, em pontos | amplitude |
+| `rg` | Range | (max − min) na janela W, em **USD por onça** | amplitude |
 | `dsp` | Deslocamento | \|último − primeiro\| na janela W | movimento líquido |
 | `er` | Efficiency ratio | `dsp` ÷ Σ\|Δtick\| | direcional vs lateral |
 | `spr` | Spread relativo | spread atual ÷ mediana do spread daquela hora | stress de liquidez |
@@ -82,6 +82,28 @@ baseline(m)     = mediana móvel de value_bruto para o minuto-do-dia m,
                   sobre os últimos N dias de sessão
 value           = clamp( value_bruto / baseline(m), 0, 1 ) após escalonamento
 ```
+
+#### Duas baselines, não uma
+
+A mesma estrutura por minuto-do-dia é mantida **duas vezes**, sobre a mesma
+janela de N dias, em unidades diferentes:
+
+```
+baseline(m)            mediana móvel de value_bruto        adimensional, 0..1
+base_rg_usd_oz(m)      mediana móvel de rg BRUTO           USD por onça
+```
+
+`baseline(m)` normaliza o próprio sensor e é o que produz `value`. Ela é
+adimensional por construção, porque `value_bruto` compõe componentes já
+normalizados — e por isso **não serve para dimensionar distância de preço**.
+
+`base_rg_usd_oz(m)` é o range típico daquele minuto do dia, em unidade física.
+É esta que os consumidores usam quando precisam de uma distância, e é ela que
+transfere entre corretoras: sendo medida localmente em cada feed, não carrega
+nenhuma constante calibrada num feed específico. Ver ADR 0004.
+
+O custo é uma segunda estrutura incremental na memória do sensor. É o mesmo
+cálculo já feito para `rg`, guardado antes da normalização em vez de depois.
 
 Notas de implementação:
 
@@ -163,8 +185,14 @@ Registo:
  "symbol":"XAUUSDm","acct":"standard","value":0.72,"state":"EXPANDING",
  "dq":0.61,"conf":0.90,"fresh_ms":180,
  "c":{"tr":0.81,"rg":0.68,"dsp":0.44,"er":0.61,"spr":0.55,"atr":0.49},
- "base":0.31,"lat_us":142}
+ "base":0.31,"base_rg":0.42,"lat_us":142}
 ```
+
+`base` é adimensional e serve à normalização do próprio sensor. `base_rg` é
+`base_rg_usd_oz(m)`, em **USD por onça**, e é o que os consumidores usam para
+dimensionar distância. Logar os dois não é redundância: sem `base_rg` no
+registo, o degrau efetivo de uma operação passada não é reconstituível, e a
+análise retroativa das janelas de ±15 min perde o parâmetro que mais importa.
 
 **Política de amostragem** — registar tick a tick enche disco em dias:
 
@@ -202,19 +230,28 @@ Os alvos numéricos são propostas iniciais. Devem ser fixados **antes** da prim
 
 ### Motor de Trailing
 
-Consome `value` para dimensionar o degrau da escada e o gatilho de ativação.
+Consome a baseline de range do horário para dimensionar o degrau da escada e o gatilho de ativação.
 
 ```
-degrau_pontos = degrau_base × (1 + k × value)
+degrau_usd_oz = k × range_tipico_do_horario(m)
 ```
 
-`degrau_base` e `k` são configuráveis. Volatilidade alta alarga o degrau, evitando que ruído normal encerre a posição cedo demais.
+onde `range_tipico_do_horario(m)` é `base_rg_usd_oz(m)` da secção 2.3, logado
+como `base_rg`.
+
+`k` é o **único** parâmetro, e é adimensional. Não há constante de base: o
+degrau é uma fração do range que aquele minuto do dia costuma produzir. Ásia
+parada gera degrau estreito, abertura de Londres gera degrau largo, sem que
+nada seja reconfigurado — e o mesmo `k` vale em qualquer corretora, porque a
+referência é medida no feed local em vez de calibrada uma vez e transportada.
+
+Conversão para ponto e lote acontece na borda de execução, nunca aqui.
 
 ### Guardian
 
 - `state == CLIMAX` → veto de novas entradas.
 - `spr` acima do limiar → veto por custo.
-- `value` → **dimensiona o lote**, não a distância do stop catastrófico. O limite de perda é definido em JPY; se `k × value` exigir uma distância maior do que a permitida por esse limite, o Guardian reduz o lote até caber, ou recusa a entrada.
+- `value` → **dimensiona o tamanho da posição**, em onças, não a distância do stop catastrófico. O limite de perda é definido em JPY; se a distância exigida — `k × base_rg`, pela mesma referência medida do Motor de Trailing — não couber nesse limite, o Guardian reduz o tamanho até caber, ou recusa a entrada. A conversão de onças para lote acontece na borda de execução.
 
 ### Dashboard
 

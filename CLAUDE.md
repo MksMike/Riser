@@ -119,6 +119,30 @@ Versão nova de dependência não entra por conveniência: entra por decisão, c
 o lock regenerado nos dois PCs e uma comparação de agregação sobre a mesma
 amostra de ticks antes de ser aceita.
 
+### 10. Ferramenta que verifica não pode falhar em silêncio
+
+Todo script em `tools/` é **ASCII puro**. Acentuação em padrão de busca entra
+por escape (`não`), nunca como caractere literal.
+
+Toda leitura de arquivo declara o encoding:
+
+```powershell
+Get-Content -LiteralPath $f -Encoding UTF8
+```
+
+O motivo é concreto: o PowerShell 5.1 lê `.ps1` como ANSI e assume a codepage
+do sistema em `Get-Content` sem `-Encoding`. Um regex com acento chega
+corrompido e **deixa de casar sem erro nenhum** — a verificação passa a
+responder "nada encontrado" enquanto está quebrada.
+
+Falso negativo silencioso em ferramenta de verificação é pior que não ter
+ferramenta: sem ela ninguém confia no repositório e as coisas se conferem à
+mão; com ela quebrada, todos confiam e ninguém confere.
+
+Por isso ferramenta de verificação se testa contra caso **positivo** conhecido,
+não só contra o repositório limpo. Verde num repositório sem problema não
+distingue "não há achado" de "não consigo achar".
+
 ---
 
 ## Estrutura e caminhos
