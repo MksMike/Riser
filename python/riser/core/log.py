@@ -151,6 +151,20 @@ class JsonlLogger:
 
     # ---------------------------------------------------------------- publico
 
+    def envelope(self, lvl: str = "info") -> dict[str, Any]:
+        """O envelope sozinho, para artefato que NAO e linha de log.
+
+        Relatorio gravado em arquivo proprio precisa da mesma procedencia de uma
+        linha de log, pelo mesmo motivo (invariante 6): sem `run_id`,
+        `build_hash` e `config_hash`, a medicao de um mes nao se atribui ao
+        codigo e a configuracao que a produziram, e comparar dois meses vira
+        comparar duas coisas de origem desconhecida.
+
+        Existe como metodo publico para que ninguem precise montar o envelope a
+        mao e esquecer um campo — que e exatamente como schemas divergem.
+        """
+        return self._envelope(lvl)
+
     def write(self, lvl: str, **fields: Any) -> None:
         if lvl not in LEVELS:
             raise ValueError(f"lvl invalido: {lvl!r}; esperado um de {LEVELS}")
