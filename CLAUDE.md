@@ -215,6 +215,23 @@ terminais em runtime.
 
 ---
 
+## Antes de commitar
+
+```powershell
+.\tools\check-invariants.ps1                 # exit 0, silencioso
+python\.venv\Scripts\python.exe -m pytest    # ao menos um teste, e passa
+```
+
+- `check-invariants` sai 0. Achado é para corrigir, não para suprimir; se mais
+  de dois arquivos suprimirem a mesma regra, o problema é da regra.
+- `pytest` roda **pelo menos um teste** e passa. `no tests ran` é verde que não
+  distingue passou de não executou — o mesmo modo de falha do invariante 10, e
+  vale tanto quanto suíte nenhuma.
+- `git status` não mostra nenhum arquivo de dado.
+- Sensor novo tem documento em `docs/sensors/`.
+
+---
+
 ## Trabalho em paralelo
 
 Duas sessões usam `git worktree`, nunca a mesma pasta:
