@@ -7,7 +7,6 @@ uma delas nao levanta excecao — devolve o dado errado, ou baixa tudo de novo.
 
 from __future__ import annotations
 
-import urllib.error
 from datetime import datetime, timezone
 
 import pytest
@@ -202,19 +201,32 @@ def test_config_carrega_e_e_conservadora(cfg: dk.FeedConfig):
     assert cfg.base_url.startswith("https://")
     assert cfg.max_retries >= 1
     assert cfg.backoff_max_s >= cfg.backoff_base_s
-    # 4s foi medido, nao escolhido: abaixo disso o servidor devolve 503 e o
-    # backoff custa mais tempo do que a pausa teria custado. Ver a config.
-    assert cfg.min_interval_s >= 4.0, (
-        "intervalo abaixo do medido: o servidor passa a recusar pedidos"
+    # A medicao de 2026-08-09, em campo limpo, mostrou que o limite e de
+    # CONEXOES NOVAS e nao de pedidos: 2 conexoes persistentes deram 100% de
+    # sucesso e 41 arq/min; acima disso o sucesso cai. Nao subir sem medir.
+    assert 1 <= cfg.workers <= 4, (
+        f"workers={cfg.workers} fora da faixa medida; acima de 2 o sucesso caiu"
     )
+    assert cfg.min_interval_s >= 0.0
 
 
 # ---------------------------------------------------------- retry observavel
 
 
-class _HTTP503(urllib.error.HTTPError):
-    def __init__(self) -> None:
-        super().__init__("http://x", 503, "Service Unavailable", {}, None)  # type: ignore[arg-type]
+def _sessao_falsa(monkeypatch, status: int):
+    """Substitui a sessao keep-alive por uma que devolve sempre `status`."""
+
+    class SessaoFalsa:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def get(self, _caminho):
+            return status, b""
+
+        def fechar(self):
+            pass
+
+    monkeypatch.setattr(dk, "sessao_da_thread", lambda _cfg: SessaoFalsa())
 
 
 def test_retry_e_sempre_logado(cfg, monkeypatch):
@@ -229,10 +241,7 @@ def test_retry_e_sempre_logado(cfg, monkeypatch):
         def warn(self, **f):
             registros.append(f)
 
-    def sempre_503(*_a, **_k):
-        raise _HTTP503()
-
-    monkeypatch.setattr(dk.urllib.request, "urlopen", sempre_503)
+    _sessao_falsa(monkeypatch, 503)
     monkeypatch.setattr(dk.time, "sleep", lambda _s: None)
 
     with pytest.raises(dk.DukascopyError):
@@ -254,10 +263,7 @@ def test_404_nao_gera_retry_nem_ruido(cfg, monkeypatch):
         def warn(self, **f):
             registros.append(f)
 
-    def erro_404(*_a, **_k):
-        raise urllib.error.HTTPError("http://x", 404, "Not Found", {}, None)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(dk.urllib.request, "urlopen", erro_404)
+    _sessao_falsa(monkeypatch, 404)
     assert dk.fetch(cfg, "http://x", dk.RateLimiter(0.0), logger=LoggerFalso()) is None
     assert registros == [], "404 e ausencia esperada, nao merece aviso"
 

@@ -58,8 +58,49 @@ source:
 # quando nao se procurou a causa alternativa. Antes de dimensionar qualquer
 # coisa sobre uma explicacao de degradacao, verifique primeiro o que esta a
 # correr na maquina — e uma verificacao de segundos que teria poupado horas.
+# ============================================================
+# TUDO ACIMA ESTA INVALIDADO. LEIA A MEDICAO DE 2026-08-09.
+# ============================================================
+# As tres medicoes acima foram colhidas SOB CORRIDA DUPLA — dois downloaders
+# concorrentes sobre o mesmo diretorio. Os 503 que levaram a concluir "o limite
+# e por conexao concorrente" e "4 s serial e o otimo" vinham dos dois processos
+# a sabotarem-se. A conclusao foi corrigida no texto mas nao no numero, e o
+# numero custou horas: 4 s serial entrega ~4 arquivos/min.
+#
+# ------------------------------------------------------------
+# MEDICAO NOVA — 2026-08-09, campo limpo verificado, 25 arquivos por regime
+# ------------------------------------------------------------
+# Nenhum outro processo a falar com o feed; o medidor recusa-se a correr se
+# houver. Metrica: ARQUIVOS POR MINUTO, nao latencia por arquivo.
+#
+#   transporte              conexoes   sucesso   arq/min
+#   urllib (sem keep-alive)     1        28%        4.1
+#   keep-alive                  1         4%       27.1
+#   keep-alive                  2       100%       41.0   <- adotado
+#   keep-alive                  4        96%       23.0
+#   keep-alive                  8        84%       25.8
+#   keep-alive                 16        84%       35.5
+#
+# A CAUSA ERA O TRANSPORTE, NAO A TAXA. `urllib.request.urlopen` abre um TCP+TLS
+# novo a cada pedido e fecha a seguir; o que a Dukascopy recusa e a taxa de
+# CONEXOES NOVAS. Serial com 4 s de espaco entre pedidos deu 20% de sucesso;
+# duas conexoes persistentes SEM espaco nenhum deram 100%.
+#
+# Referencia independente: o projeto ARROW baixou 35.064 arquivos horarios em
+# 91 minutos nesta mesma maquina — 384 arq/min — usando `dukascopy-node`, que
+# tem keep-alive por omissao. Era a evidencia de que o gargalo era nosso.
+#
+# Continua havendo uma lacuna de ~9x face a essa referencia, NAO explicada. Pode
+# ser estado do servidor (o ARROW correu em fevereiro), HTTP/2, ou algo mais na
+# biblioteca. Fica registado como aberto em vez de arredondado: 41 arq/min e o
+# que esta medido aqui, hoje, e e o que o downloader usa.
+#
+# workers=2 e nao mais: foi o unico regime com 100% de sucesso. Ganhos acima
+# disso vieram sempre com perda de arquivos, e arquivo perdido custa uma passada
+# inteira de convergencia.
 politeness:
-  min_interval_s: 4.0
+  workers: 2                  # conexoes persistentes simultaneas, medido
+  min_interval_s: 0.0         # por CONEXAO; com keep-alive nao e preciso espacar
   max_retries: 5
   backoff_base_s: 2.0
   backoff_max_s: 120.0

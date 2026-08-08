@@ -20,10 +20,11 @@ resolvida em `ticks.py` a partir de `config/feeds/dukascopy.yaml`.
 
 from __future__ import annotations
 
+import http.client
 import random
+import threading
 import time
-import urllib.error
-import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -83,6 +84,7 @@ class FeedConfig:
     backoff_base_s: float
     backoff_max_s: float
     timeout_s: float
+    workers: int
     history_starts: dict[str, datetime]
 
     @classmethod
@@ -103,6 +105,7 @@ class FeedConfig:
             backoff_base_s=float(pol["backoff_base_s"]),
             backoff_max_s=float(pol["backoff_max_s"]),
             timeout_s=float(pol["timeout_s"]),
+            workers=int(pol.get("workers", 1)),
             history_starts=starts,
         )
 
@@ -222,6 +225,76 @@ def last_complete_month(now: datetime) -> tuple[datetime, datetime]:
 # ----------------------------------------------------------------- download
 
 
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RISER/0.1 (pesquisa)"
+
+# Uma sessao por thread. Compartilhar uma conexao HTTP entre threads corrompe
+# a maquina de estados do protocolo — respostas saem trocadas entre pedidos.
+_LOCAL = threading.local()
+
+
+def sessao_da_thread(cfg: FeedConfig) -> "Sessao":
+    s = getattr(_LOCAL, "sessao", None)
+    if s is None:
+        host = cfg.base_url.split("//", 1)[1].split("/", 1)[0]
+        s = _LOCAL.sessao = Sessao(host, cfg.timeout_s)
+    return s
+
+
+class Sessao:
+    """Conexao TLS reaproveitada para muitos pedidos.
+
+    E a diferenca entre 4 e 41 arquivos por minuto, medida em campo limpo. Sem
+    keep-alive, cada pedido abre um TCP+TLS novo, e o que a Dukascopy recusa e
+    a taxa de CONEXOES NOVAS, nao a de pedidos: serial com 4 s de intervalo
+    entre pedidos deu 20% de sucesso, e duas conexoes persistentes sem intervalo
+    nenhum deram 100%.
+
+    Uma por thread. Reconecta so quando o servidor fecha ou o socket morre — e
+    tenta duas vezes, porque a primeira falha depois de uma conexao ociosa e
+    quase sempre o servidor a ter fechado do lado dele.
+    """
+
+    def __init__(self, host: str, timeout_s: float) -> None:
+        self.host = host
+        self.timeout_s = timeout_s
+        self.conn: http.client.HTTPSConnection | None = None
+        self.reconexoes = 0
+
+    def _abrir(self) -> http.client.HTTPSConnection:
+        if self.conn is None:
+            self.conn = http.client.HTTPSConnection(self.host, timeout=self.timeout_s)
+            self.reconexoes += 1
+        return self.conn
+
+    def get(self, caminho: str) -> tuple[int, bytes]:
+        """Devolve (status, corpo). Levanta se as duas tentativas falharem."""
+        ultimo: Exception | None = None
+        for tentativa in (1, 2):
+            c = self._abrir()
+            try:
+                c.request("GET", caminho, headers={
+                    "User-Agent": USER_AGENT,
+                    "Connection": "keep-alive",
+                    "Accept": "*/*",
+                })
+                r = c.getresponse()
+                return r.status, r.read()
+            except (http.client.HTTPException, OSError, TimeoutError) as exc:
+                ultimo = exc
+                self.fechar()
+                if tentativa == 2:
+                    raise
+        raise ultimo  # type: ignore[misc]
+
+    def fechar(self) -> None:
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            except Exception:  # noqa: BLE001, S110
+                pass
+            self.conn = None
+
+
 class RateLimiter:
     """Intervalo minimo entre requisicoes.
 
@@ -232,13 +305,19 @@ class RateLimiter:
 
     def __init__(self, min_interval_s: float) -> None:
         self.min_interval_s = min_interval_s
-        self._last = 0.0
+        # Por THREAD, nao global: o intervalo protege a conexao, e cada thread
+        # tem a sua. Um relogio unico serializaria as conexoes e desfaria o
+        # ganho da concorrencia.
+        self._local = threading.local()
 
     def wait(self) -> None:
-        elapsed = time.monotonic() - self._last
-        if elapsed < self.min_interval_s:
-            time.sleep(self.min_interval_s - elapsed)
-        self._last = time.monotonic()
+        if self.min_interval_s <= 0:
+            return
+        ultimo = getattr(self._local, "ultimo", 0.0)
+        d = self.min_interval_s - (time.monotonic() - ultimo)
+        if d > 0:
+            time.sleep(d)
+        self._local.ultimo = time.monotonic()
 
 
 def fetch(
@@ -260,23 +339,25 @@ def fetch(
     codigo mal escrito. Foi assim que 503 em serie passou por "download
     demorado" numa primeira execucao real.
     """
+    caminho = url.split(cfg.base_url.split("//", 1)[1].split("/", 1)[0], 1)[-1]
+    sessao = sessao_da_thread(cfg)
+
     ultima: Exception | None = None
     for tentativa in range(cfg.max_retries):
         limiter.wait()
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "RISER/0.1 (pesquisa; dado de tick)"}
-        )
         try:
-            with urllib.request.urlopen(req, timeout=cfg.timeout_s) as resp:
-                return resp.read()
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
+            status, corpo = sessao.get(caminho)
+            if status == 200:
+                return corpo
+            if status == 404:
                 return None
-            ultima = exc
-            # 429 e 5xx sao transitorios: vale esperar.
-            if exc.code not in (429, 500, 502, 503, 504):
-                raise DukascopyError(f"HTTP {exc.code} em {url}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            ultima = DukascopyError(f"HTTP {status}")
+            setattr(ultima, "code", status)
+            if status not in (429, 500, 502, 503, 504):
+                raise DukascopyError(f"HTTP {status} em {url}")
+        except DukascopyError:
+            raise
+        except (http.client.HTTPException, TimeoutError, OSError) as exc:
             ultima = exc
 
         # Backoff exponencial com jitter. O jitter existe para que uma retomada
@@ -413,22 +494,38 @@ def download_range(
             ordem="cronologica_reversa",
         )
 
-    for n, marca in enumerate(marcas, 1):
+    def uma(marca: datetime) -> tuple[datetime, str, int]:
+        """Um arquivo horario. Cada thread tem a sua sessao e o seu intervalo."""
         try:
-            desfecho = download_hour(
+            d = download_hour(
                 cfg, instrument, marca, limiter, root=root, logger=logger
             )
-            tally[desfecho] += 1
-            if desfecho in ("ok", "empty"):
-                bytes_novos += raw_path(instrument, marca, root).stat().st_size
+            b = (raw_path(instrument, marca, root).stat().st_size
+                 if d in ("ok", "empty") else 0)
+            return marca, d, b
         except DukascopyError as exc:
-            tally["erro"] += 1
-            desfecho = "erro"
             if logger:
                 logger.error(
                     "E5002", event="download_fail", instrument=instrument,
                     hora=marca.isoformat(), msg=str(exc),
                 )
+            return marca, "erro", 0
+
+    # Submissao em ordem cronologica reversa mesmo com concorrencia: as marcas
+    # entram na fila da mais recente para a mais antiga, e uma corrida
+    # interrompida deixa o periodo util pronto. A ordem de CONCLUSAO nao e
+    # estrita, e nao precisa ser — o que importa e por onde se comeca.
+    if cfg.workers <= 1:
+        resultados = (uma(m) for m in marcas)
+    else:
+        pool = ThreadPoolExecutor(max_workers=cfg.workers)
+        resultados = pool.map(uma, marcas)
+
+    n = 0
+    for marca, desfecho, b in resultados:
+        n += 1
+        tally[desfecho] += 1
+        bytes_novos += b
 
         # Skip nao consome rede, entao nao entra na estimativa.
         if desfecho not in ("ja_tinha", "ja_ausente"):
@@ -454,6 +551,9 @@ def download_range(
                 f"  | faltam {pendentes} arq, ~{estimativa_restante(pendentes, cfg.min_interval_s)}",
                 flush=True,
             )
+
+    if cfg.workers > 1:
+        pool.shutdown(wait=True)
 
     if logger:
         logger.info(
