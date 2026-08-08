@@ -12,6 +12,11 @@
 *.csv
 *.tsv
 !config/**/*.csv
+# Bruto do feed e os artefatos do downloader. Vivem em RISER-data; estao aqui
+# como defesa para o caso de alguem baixar dentro do repositorio por engano.
+*.bi5
+*.absent
+*.part
 
 # ============================================================
 # MQL5 — compilados e artefatos do terminal

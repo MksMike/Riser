@@ -1,0 +1,40 @@
+# Feed de referencia Dukascopy.
+#
+# NAO e uma corretora de execucao. Nao tem manifesto em config/brokers/ porque
+# nada e executado aqui: serve para medir e para o criterio 7 do SVC, que exige
+# que um sensor funcione em mais de um feed. Um sensor que so funciona num feed
+# esta a ler artefacto do feed, nao o mercado.
+
+id: dukascopy
+label: Dukascopy Bank SA (feed publico)
+
+source:
+  base_url: "https://datafeed.dukascopy.com/datafeed"
+  # O caminho usa o mes com base ZERO: janeiro e 00, dezembro e 11.
+  # Armazenamos com base 1 e convertemos so ao montar a URL. Ver dukascopy.py.
+  path_template: "{instrument}/{year:04d}/{month0:02d}/{day:02d}/{hour:02d}h_ticks.bi5"
+
+# Educado de proposito. Este e um servico publico e gratuito; o custo de ser
+# bloqueado e perder acesso ao unico feed de referencia independente que o
+# projeto tem.
+politeness:
+  min_interval_s: 0.5
+  max_retries: 5
+  backoff_base_s: 1.0
+  backoff_max_s: 60.0
+  timeout_s: 30.0
+
+instruments:
+  XAUUSD:
+    # Fator de escala dos inteiros do .bi5 para preco. O .bi5 guarda bid e ask
+    # como inteiros; o preco em USD por onca e inteiro / 10^price_decimals.
+    #
+    # VERIFICAR na primeira parseada: o valor abaixo tem de produzir precos na
+    # faixa plausivel do ouro. O parser valida e recusa em vez de gravar
+    # Parquet com a escala errada — dado com escala errada e pior que dado
+    # nenhum, porque parece utilizavel.
+    price_decimals: 3
+    unit: usd_per_oz
+    plausible_range: [500.0, 20000.0]
+    # Dukascopy publica desde esta data. Pedir antes disso devolve 404 em massa.
+    history_starts: "2003-05-05"
