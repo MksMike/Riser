@@ -219,16 +219,42 @@ terminais em runtime.
 
 ```powershell
 .\tools\check-invariants.ps1                 # exit 0, silencioso
+.\tools\compile-mql5.ps1                     # exit 0; nem erro nem aviso
 python\.venv\Scripts\python.exe -m pytest    # ao menos um teste, e passa
 ```
 
 - `check-invariants` sai 0. Achado é para corrigir, não para suprimir; se mais
   de dois arquivos suprimirem a mesma regra, o problema é da regra.
+- `compile-mql5` sai 0. Também roda sozinho, por hook, a cada `.mq5`/`.mqh`
+  escrito — o comando acima é a rede para quando o hook não estiver ativo
+  (sessão sem `.claude/settings.json` carregado, ou edição feita fora daqui).
+  **Aviso reprova como erro.** Aviso de MQL5 costuma ser perda de dado em
+  conversão, e este projeto converte preço.
 - `pytest` roda **pelo menos um teste** e passa. `no tests ran` é verde que não
   distingue passou de não executou — o mesmo modo de falha do invariante 10, e
   vale tanto quanto suíte nenhuma.
 - `git status` não mostra nenhum arquivo de dado.
 - Sensor novo tem documento em `docs/sensors/`.
+
+### O compilador do MetaEditor mente, e por isso não se chama ele direto
+
+Medido nesta máquina, não deduzido da documentação. O código de saída **não é
+status**: é a contagem de `.ex5` produzidos. Compilar limpo dá 1, compilar com
+três erros dá **0**, e arquivo inexistente dá 0 sem gerar log nenhum. Um
+`if errorlevel` comum reprova o build bom e aprova o quebrado.
+
+Some com isso: há uma linha `Result:` por arquivo, não uma por execução;
+compilar uma pasta sem `/inc` resolve include contra a pasta de instalação e
+quebra todo `#include <RISER\...>`; compilar uma pasta **ignora `.mqh`**; e o
+compilador não rastreia dependência de `.mqh`, então mexer num sensor não
+recompila quem o inclui.
+
+Esse último é o que mais importa aqui: pelo invariante 5 todo sensor mora em
+`.mqh`, então a edição mais comum do repositório é justamente a que o
+compilador não enxerga. Por isso `compile-mql5.ps1` apaga os `.ex5`, compila a
+árvore inteira e verifica cada `.mqh` à parte. Não há modo incremental de
+propósito — um atalho que às vezes não recompila é a forma mais confiável de
+trazer o verde falso de volta.
 
 ---
 
@@ -283,12 +309,23 @@ nada. O usuário é o dono do projeto até o sistema estar validado em conta rea
 Não assuma resposta para nenhuma destas. Pergunte.
 
 1. O EA deve replicar o estilo manual do dono, ou buscar edge independente?
-   Muda contra o que os sensores são avaliados.
-2. Coleta contínua de ticks: VPS, PC sempre ligado, ou aceitar lacunas?
-3. BTCUSD opera 24/7 e quebra a normalização por horário do SVC. Assumir
+   Muda contra o que os sensores são avaliados. **Continua aberta de propósito:**
+   há um experimento barato que a decide antes da escolha — as entradas reais
+   contra sintéticas casadas, medidas por MAE e tempo-até-verde
+   (`lab/baseline_casado.py`). Se as reais forem indistinguíveis das sintéticas,
+   o resultado vem de capital e paciência, não de timing, e replicar entrada
+   deixa de ser opção. Fechar antes de rodar seria escolher no escuro uma
+   pergunta que o dado já responde.
+2. **Margem compartilhada.** O EA vai rodar na mesma conta em que o dono opera à
+   mão, separado por magic number — isso está decidido. O que não está: as
+   posições manuais não têm stop e consomem margem de forma imprevisível, e
+   podem liquidar as posições do EA sem que nada no EA tenha errado. O Guardian
+   enxerga apenas o que é dele. Não resolvido, e não assumir resolução.
+3. Coleta contínua de ticks: VPS, PC sempre ligado, ou aceitar lacunas?
+4. BTCUSD opera 24/7 e quebra a normalização por horário do SVC. Assumir
    estrutura de sessão ou generalizar agora?
-4. Backup do `RISER-data`. Dado de tick perdido é insubstituível.
-5. Como distinguir **ausência esperada** de **feed morto**. Durante a pausa
+5. Backup do `RISER-data`. Dado de tick perdido é insubstituível.
+6. Como distinguir **ausência esperada** de **feed morto**. Durante a pausa
    diária nenhum tick chega, nenhuma barra fecha e `freshness_ms` cresce sem
    parar — indistinguível de queda de conexão, e as duas pedem reações opostas:
    esperar numa, parar tudo na outra. Ver `docs/decisions/0008-*`.
@@ -298,13 +335,36 @@ Não assuma resposta para nenhuma destas. Pergunte.
 ## Ordem de trabalho
 
 1. Fundação: junctions, gitignore, schema de log, coletor de ticks
-2. Dashboard Trader v1 — botões + captura de janela bruta de ±15 min por operação
+2. Dashboard Trader v1 — **anotação e disponibilidade**, não captura
 3. Harness de backtest com custo real + teste de paridade
 4. Sensor de Volatilidade Curta (ver `docs/sensors/`)
 5. Guardian + stop catastrófico
 6. Motor de trailing por ticket
 7. Reentradas e empilhamento
 
-O item 2 vem cedo de propósito: enquanto o dono opera manualmente, cada operação
-com janela bruta gravada é dado rotulado que não se compra nem se simula. Um dia
-operando sem ele é um dia de dado perdido.
+O item 2 vem cedo de propósito: enquanto o dono opera manualmente, cada dia sem
+ele é um dia de dado que não se compra nem se simula. Mas o que se perde não é a
+janela de ticks — é a **anotação**.
+
+O coletor do item 1 roda no mesmo terminal em que ele opera. Logo o bruto já
+está no disco de ponta a ponta, e qualquer recorte em torno de uma operação se
+reconstrói dele. Gastar o v1 em captura de janela seria gravar duas vezes o que
+já está gravado. O que o coletor **não** produz, e que desaparece para sempre se
+não for registrado no instante:
+
+- **Motivo, em dois botões: `técnico` ou `externo`.** Não é tag completa — é a
+  divisão mínima que torna tratável a ambiguidade entre "o sensor está cego" e
+  "ele agiu por algo que não está na série de preço". Sem ela, as duas hipóteses
+  ficam indistinguíveis para sempre, e nenhum dado posterior as separa.
+- **Disponibilidade: ele estava na mesa?** Sem isso, ausência de operação
+  significa tanto "avaliou e não quis" quanto "estava dormindo", e a segunda é a
+  maior parte do tempo. É o que transforma o silêncio dele — a única classe
+  negativa abundante que existe — em dado utilizável.
+
+**A janela de ±15 min não é dataset rotulado.** Ela vale, e o motivo é outro: é
+o que permite calcular retroativamente qualquer sensor inventado no futuro sobre
+operações já realizadas. Como dado de aprendizado ela não serve, por duas razões
+independentes: sob "segurar até virar positivo" não existe classe "errei", e a
+janela é centrada na entrada por construção — nenhuma amostra dela é negativa,
+nem por acidente. A classe negativa, quando for necessária, sai do coletor
+contínuo, e como ela é amostrada é escolha que determina o resultado.

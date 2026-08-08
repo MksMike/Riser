@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf '%s' \"$p\" | grep -qiE '\\.(mq5|mqh)' || exit 0; printf '%s' \"$p\" | powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PROJECT_DIR:-$PWD}/tools/hook-compile-mql5.ps1\"",
+            "timeout": 120,
+            "statusMessage": "Compilando MQL5..."
+          }
+        ]
+      }
+    ]
+  }
+}

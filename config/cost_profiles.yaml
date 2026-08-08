@@ -20,7 +20,52 @@ profiles:
 # Teórico vem do tick data (existe em demo).
 # Realizado vem da execução (só existe ao vivo).
 # A diferença entre os dois É o slippage — métrica viva, não constante.
+#
+# Os perfis acima classificam custo de ENTRAR. Custo de FICAR é outra dimensão
+# e está em `holding`, abaixo. Não se somam.
 measurement:
   min_sample_days: 5
   recompute_interval_days: 7
   report_by_hour_of_day: true
+  report_by_holding_time: true     # ver `holding`
+
+# ============================================================
+# Custo de carregar posição — swap / financiamento
+# ============================================================
+# NÃO soma com spread e comissão, e por isso não entra em
+# `max_cost_usd_per_oz`. Spread e comissão se pagam uma vez, ao entrar. Swap se
+# paga a cada rollover: a unidade tem "por noite" dentro dela. Somar os dois
+# produziria um número que só vale para uma duração de posição que ninguém
+# declarou — e que mudaria de significado a cada operação.
+#
+# Por que isto não é detalhe. Com o custo medido na conta standard, uma única
+# noite comprado custa mais que o dobro do spread pago na entrada; uma posição
+# que atravessa a semana paga mais de dez vezes o spread, porque o dia triplo
+# cai no meio. Avaliar "segurar até virar positivo" sem financiamento mede só a
+# metade barata do custo — e mede justamente a metade que não cresce com o
+# tempo, que é a única variável que esse estilo realmente move.
+#
+# Não há valor numérico aqui de propósito. O swap vive no manifesto da
+# corretora, que é a borda de execução e a única fonte; copiá-lo para cá
+# criaria duas verdades que divergem no dia em que a corretora mudar a taxa
+# (ADR 0006). Aqui ficam apenas as regras de aplicação, que são decisão do
+# projeto e não dado da corretora.
+holding:
+  source: brokers                  # bloco `swap` do manifesto da corretora
+  required: true                   # backtest sem financiamento não reporta
+
+  # Convenções de aplicação. Todas VERIFICAR contra extrato antes de valer:
+  # swap anunciado e swap cobrado divergem, e a diferença só aparece no
+  # extrato de uma conta que carregou posição de verdade.
+  charge_on_weekend: false         # VERIFICAR — mercado fechado, nada é cobrado
+  triple_rollover: by_broker       # o dia é declarado por manifesto; varia
+  rollover_hour: VERIFICAR         # derivar de server.timezone_offset
+
+  # Direção importa: comprado e vendido pagam taxas diferentes, e em ouro
+  # costumam ter até sinais diferentes. Um relatório que reporte swap médio
+  # entre as duas pontas esconde exatamente a assimetria que decide o estilo.
+  report_by_side: true
+
+  # A curva de custo por tempo de retenção é coluna de relatório, como os
+  # perfis de entrada (invariante 8). Nunca uma constante escolhida uma vez.
+  report_buckets_hours: [1, 24, 72, 168]

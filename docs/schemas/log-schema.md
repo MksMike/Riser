@@ -173,9 +173,23 @@ Registrar tick a tick enche disco em dias.
 **Janela bruta de ticks:** ±15 minutos em torno de **cada** operação, manual ou
 automática, em Parquet, em `RISER-data\windows\`.
 
-Esta é a regra mais valiosa do projeto. Qualquer sensor inventado no futuro pode
-ser calculado retroativamente sobre operações já realizadas. Não é preciso saber
-hoje o que se vai querer medir amanhã — basta não jogar fora o dado bruto.
+O valor é um só: qualquer sensor inventado no futuro pode ser calculado
+retroativamente sobre operações já realizadas. Não é preciso saber hoje o que se
+vai querer medir amanhã — basta não jogar fora o dado bruto.
+
+**O que a janela não é: dataset rotulado.** Duas razões independentes, e cada
+uma bastaria. Sob um estilo que segura a posição até ela virar positiva, o
+resultado é praticamente constante e não existe classe "errei" para aprender
+contra. E a janela é centrada na entrada por construção — todo recorte do corpus
+tem uma operação no meio, então nenhuma amostra dele é negativa, nem por
+acidente. Qualquer classe negativa tem de sair do registro contínuo, e o
+critério de amostragem dela é um parâmetro livre que determina o resultado
+sozinho: precisa ser declarado, não escolhido em silêncio.
+
+Quando o coletor contínuo roda no mesmo terminal em que se opera, a janela é
+reconstituível do contínuo e passa a ser redundância deliberada, não fonte. Ela
+se justifica sozinha quando captura o que o coletor não captura — o feed e a
+execução daquela conta.
 
 Toggle `capture_raw_window`, ligado no perfil dev, desligado em build distribuído.
 

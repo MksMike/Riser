@@ -200,7 +200,9 @@ análise retroativa das janelas de ±15 min perde o parâmetro que mais importa.
 - Fora disso, amostragem a cada 5 segundos.
 - Janela bruta de ticks de ±15 min gravada em torno de **cada operação**, manual ou automática.
 
-Essa última regra é a mais importante do documento. Ela permite que qualquer sensor inventado no futuro seja calculado retroativamente sobre operações já realizadas. Não é preciso saber hoje o que se vai querer medir amanhã — basta não deitar fora o dado bruto.
+Essa última regra é a mais importante do documento, e o motivo é um só: ela permite que qualquer sensor inventado no futuro seja calculado retroativamente sobre operações já realizadas. Não é preciso saber hoje o que se vai querer medir amanhã — basta não deitar fora o dado bruto.
+
+O que ela **não** é: dataset rotulado de entradas. A janela é centrada na operação por construção, portanto não contém amostra negativa; e sob um estilo que segura a posição até virar positiva o rótulo de resultado é praticamente constante. Avaliar este sensor contra as operações manuais como se fossem rótulos mediria a escolha do fundo de comparação, não o sensor — ver os critérios de aceitação abaixo, que são todos prospectivos e nenhum depende de concordar com quem operou.
 
 **Rotação:** compressão diária, retenção indefinida das janelas de operação, retenção de 90 dias das amostras de 5 segundos.
 

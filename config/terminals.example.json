@@ -2,6 +2,8 @@
   "_comment": "Copie para terminals.json (gitignored). O hash do terminal difere em cada PC — nunca versione este arquivo preenchido.",
   "pc": "PC-Home",
   "data_root": "C:\\dev\\RISER-data",
+  "_metaeditor": "Usado por tools\\compile-mql5.ps1. Fixe quando houver mais de um MT5 instalado: builds diferentes do MetaEditor não são a mesma ferramenta, e um .ex5 gerado por build mais novo pode não carregar num terminal mais antigo. Na dúvida, aponte para o MetaEditor do terminal MAIS ANTIGO em uso.",
+  "metaeditor": "C:\\Program Files\\MetaTrader 5 EXNESS\\MetaEditor64.exe",
   "terminals": [
     {
       "alias": "exness-standard",
