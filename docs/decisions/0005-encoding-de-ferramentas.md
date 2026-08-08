@@ -36,7 +36,8 @@ Vira o invariante 10 do `CLAUDE.md`.
 
 O ponto 3 é o que generaliza. Os pontos 1 e 2 tratam desta causa; o 3 trata da
 classe. `check-invariants.ps1` foi verificado contra um repositório sintético
-com um caso que deve acusar e um que não deve, para cada uma das quatro regras.
+com um caso que deve acusar e um que não deve, para cada regra que ele
+implementa.
 
 ## Consequências
 

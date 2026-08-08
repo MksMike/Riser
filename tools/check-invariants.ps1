@@ -7,8 +7,8 @@
   o repetiam continuam dizendo a versao antiga, e ninguem percebe ate alguem
   implementar a partir do documento errado.
 
-  Este script nao tenta ser exaustivo. Ele cobre os quatro modos de falha que
-  ja aconteceram neste repositorio. Falso negativo e aceitavel; falso positivo
+  Este script nao tenta ser exaustivo. Ele cobre os modos de falha que ja
+  aconteceram neste repositorio. Falso negativo e aceitavel; falso positivo
   ruidoso nao - um verificador que grita todo dia deixa de ser lido, e a partir
   dai vale menos que nenhum.
 
@@ -41,6 +41,14 @@
       <!-- invariant-ok: LOG_PATH cita o caminho anterior a decisao 0002 -->
       # invariant-ok: UNITS_POINTS ...
 
+  Para o arquivo inteiro, uma regra por vez, nas primeiras linhas do cabecalho.
+  Existe para o documento que DESCREVE um antipadrao e precisa de o citar em
+  quase todo paragrafo:
+
+      <!-- invariant-ok-file: CROSS_FILE_COUNT este documento descreve o padrao -->
+
+  Nunca desliga tudo: cada regra dispensada tem de ser nomeada.
+
   Supressao sem motivo escrito depois do ID e aceita, mas nao ajuda ninguem.
 #>
 
@@ -71,6 +79,10 @@ $Rules = [ordered]@{
         Invariant = 'Regra de .gitignore que se refere a raiz precisa de barra inicial (CLAUDE.md)'
         Why       = 'regra de diretorio sem ancora casa codigo em qualquer nivel; core.ignorecase agrava'
     }
+    'CROSS_FILE_COUNT' = @{
+        Invariant = 'Documento normativo nao carrega contagem de conteudo alheio (ADR 0006)'
+        Why       = 'contagem de itens que vivem em outro arquivo: apodrece quando o outro arquivo muda'
+    }
 }
 
 if ($ShowRules) {
@@ -100,12 +112,37 @@ function Add-Finding {
 
 # Supressao vale na propria linha ou na imediatamente anterior. A anterior
 # existe porque dentro de bloco de codigo markdown nao cabe comentario HTML.
+#
+# $FileWide sao as regras suprimidas para o arquivo inteiro. Existe para um caso
+# especifico: um documento que DESCREVE um antipadrao cita esse antipadrao em
+# quase todo paragrafo. Suprimir linha a linha ali polui o texto e, pior, quem
+# le passa a ignorar os marcadores.
 function Test-Suppressed {
-    param([string[]] $Lines, [int] $Index, [string] $RuleId)
+    param([string[]] $Lines, [int] $Index, [string] $RuleId, [string[]] $FileWide = @())
+    if ($FileWide -contains $RuleId) { return $true }
     $pattern = 'invariant-ok:\s*' + [regex]::Escape($RuleId)
     if ($Lines[$Index] -match $pattern) { return $true }
     if ($Index -gt 0 -and $Lines[$Index - 1] -match $pattern) { return $true }
     return $false
+}
+
+# Supressao de arquivo inteiro, uma regra por vez, declarada no cabecalho:
+#
+#     <!-- invariant-ok-file: CROSS_FILE_COUNT este documento descreve o padrao -->
+#
+# Restrita as primeiras linhas de proposito: enterrada no meio do texto ela
+# viraria uma isencao que ninguem ve ao abrir o arquivo. Nunca desliga tudo -
+# cada regra dispensada tem de ser nomeada.
+function Get-FileWideSuppressions {
+    param([string[]] $Lines)
+    $ids = @()
+    $limit = [Math]::Min(20, $Lines.Count)
+    for ($k = 0; $k -lt $limit; $k++) {
+        foreach ($m in [regex]::Matches($Lines[$k], 'invariant-ok-file:\s*([A-Z_]+)')) {
+            $ids += $m.Groups[1].Value
+        }
+    }
+    return $ids
 }
 
 # Linguagens que representam codigo-fonte de verdade. Blocos json/yaml/text
@@ -132,6 +169,7 @@ foreach ($file in $targets) {
     # o simbolo a resolver pertencem ali por definicao - e o unico lugar onde
     # pertencem. Varrer isso seria acusar o arquivo de fazer o seu trabalho.
     $isBrokerManifest = $file -match '\\config\\brokers\\'
+    $fileWide = Get-FileWideSuppressions $lines
 
     $inFence = $false
     $fenceLang = ''
@@ -153,7 +191,7 @@ foreach ($file in $targets) {
         if ($line -match 'logs[\\/][^\s`''"]*\.jsonl') {
             $pathText = $Matches[0]
             if ($pathText -notmatch 'hash[-_]login|hash-de-ACCOUNT_LOGIN|account_hash') {
-                if (-not (Test-Suppressed $lines $i 'LOG_PATH')) {
+                if (-not (Test-Suppressed $lines $i 'LOG_PATH' $fileWide)) {
                     Add-Finding $file $no 'LOG_PATH' $line
                 }
             }
@@ -170,7 +208,7 @@ foreach ($file in $targets) {
             elseif ($inFence -and $CodeLangs -contains $fenceLang) {
                 $flag = $true
             }
-            if ($flag -and -not (Test-Suppressed $lines $i 'SYMBOL_HARDCODED')) {
+            if ($flag -and -not (Test-Suppressed $lines $i 'SYMBOL_HARDCODED' $fileWide)) {
                 Add-Finding $file $no 'SYMBOL_HARDCODED' $line
             }
         }
@@ -184,9 +222,38 @@ foreach ($file in $targets) {
                 # Frase que ENUNCIA o invariante cita a unidade proibida de
                 # proposito. Acusar isso seria acusar a regra de existir.
                 $isStatingTheRule = $line -match '(?i)(errad|nunca|jamais|proibid|nao pode|n\u00e3o pode|nao deve|n\u00e3o deve|borda de execu|so na borda|s\u00f3 na borda|neutr[ao]s? de corretora)'
-                if (-not $isStatingTheRule -and -not (Test-Suppressed $lines $i 'UNITS_POINTS')) {
+                if (-not $isStatingTheRule -and -not (Test-Suppressed $lines $i 'UNITS_POINTS' $fileWide)) {
                     Add-Finding $file $no 'UNITS_POINTS' $line
                 }
+            }
+        }
+
+        # -- CROSS_FILE_COUNT -------------------------------------------
+        # Contagem de coisas que vivem em OUTRO arquivo. Numeracao de um
+        # documento sobre si mesmo e legitima e nao entra aqui: o que apodrece
+        # e afirmar quantos itens outro arquivo tem.
+        #
+        # Duas condicoes, ambas necessarias:
+        #   1. numeral seguido de substantivo enumeravel ('quatro regras'), ou
+        #      substantivo seguido de intervalo ('criterios 1-8');
+        #   2. referencia a arquivo alheio na linha ou nas duas anteriores.
+        #
+        # A janela de duas linhas existe porque a contagem quase nunca cai na
+        # mesma linha que nomeia o arquivo - costuma vir na frase seguinte.
+        $countNoun = 'crit(?:e|\u00e9)rios?|invariantes?|regras?|etapas?|perfis?|camadas?|sensores?|testes?|itens'
+        $countNum  = '\d+|dois|duas|tr(?:e|\u00ea)s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze'
+        $hasCount = ($line -match "(?i)\b(?:$countNum)\s+(?:$countNoun)\b") -or
+                    ($line -match "(?i)(?:$countNoun)\s+\d+\s*[-\u2013]\s*\d+")
+        if ($hasCount) {
+            $lo = [Math]::Max(0, $i - 2)
+            $window = ($lines[$lo..$i] -join ' ')
+            $selfName = [System.IO.Path]::GetFileName($file)
+            # Auto-referencia nao conta: um documento pode citar o proprio nome.
+            $refs = [regex]::Matches($window, '[\w\-\.]+\.(?:ps1|md|yaml|yml|json)|docs/|tools/|config/|mql5/') |
+                    ForEach-Object { $_.Value } |
+                    Where-Object { $_ -ne $selfName }
+            if ($refs.Count -gt 0 -and -not (Test-Suppressed $lines $i 'CROSS_FILE_COUNT' $fileWide)) {
+                Add-Finding $file $no 'CROSS_FILE_COUNT' $line
             }
         }
     }

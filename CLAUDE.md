@@ -19,7 +19,7 @@ que permite testar e descartar sensores rápido.
 | | Camada | Pergunta que responde | Critério de saída |
 |---|---|---|---|
 | 1 | Fundação | Consigo medir? | Paridade Python↔MQL5 provada; coletor rodando em 2 corretoras |
-| 2 | Core | Os sensores enxergam? | Critérios 1–8 do formato SVC cumpridos e registrados |
+| 2 | Core | Os sensores enxergam? | todos os critérios de aceitação do formato SVC (ver `docs/sensors/`) cumpridos e registrados |
 | 3 | Demo + real mínimo, em paralelo | Sobrevive fora do backtest? | Desempenho ao vivo dentro da faixa prevista |
 | 4 | Real com capital | Sobrevive com dinheiro? | Curva consistente por 3 meses |
 | 5 | Produto | Outra pessoa consegue usar? | — |
