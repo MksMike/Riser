@@ -66,6 +66,16 @@ declara discordância. Funciona melhor em sessão limpa, sem arquivos carregados
 
 ## Antes de commitar
 
+```powershell
+.\tools\check-invariants.ps1     # silencioso = nada a corrigir
+```
+
+Varre `docs/` e `config/` procurando contradição com os invariantes do
+`CLAUDE.md`. Não é exaustivo de propósito — cobre os modos de falha que já
+aconteceram aqui. `-ShowRules` lista o que ele verifica.
+
+Checklist do que o script não cobre:
+
 - `git status` não mostra nenhum arquivo de dado
 - Nenhum símbolo hardcoded
 - Nenhuma unidade em pontos ou lotes fora da borda de execução
