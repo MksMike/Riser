@@ -45,7 +45,10 @@ CANDLE_SIZE = _CANDLE.size  # 24
 
 # O arquivo mensal de candles de BID. BID porque e o que o agregador produz e o
 # que a Exness plota.
-PATH_TEMPLATE = "{instrument}/{year:04d}/{month0:02d}/BID_candles_min_1.bi5"
+# MEDIDO 2026-08-09: o arquivo de candles e por DIA, nao por mes. O caminho
+# mensal devolve timeout e o de 60 minutos devolve 404; so este responde 200.
+# O offset de cada registo conta a partir do inicio do DIA.
+PATH_TEMPLATE = "{instrument}/{year:04d}/{month0:02d}/{day:02d}/BID_candles_min_1.bi5"
 
 
 class ReferenceFormatError(ValueError):
@@ -92,42 +95,87 @@ class OhlcDiff:
             )
 
 
-def reference_url(cfg: FeedConfig, instrument: str, year: int, month: int) -> str:
-    path = PATH_TEMPLATE.format(instrument=instrument, year=year, month0=month - 1)
+def reference_url(cfg: FeedConfig, instrument: str, year: int, month: int, day: int) -> str:
+    path = PATH_TEMPLATE.format(
+        instrument=instrument, year=year, month0=month - 1, day=day
+    )
     return f"{cfg.base_url}/{path}"
 
 
-def reference_path(instrument: str, year: int, month: int, root: Path | None = None) -> Path:
+def reference_path(
+    instrument: str, year: int, month: int, day: int, root: Path | None = None
+) -> Path:
     """Guardado ao lado do bruto, num diretorio que se anuncia como referencia."""
     base = root if root is not None else raw_dir("dukascopy-reference")
-    return base / instrument / f"{year:04d}" / f"{month:02d}" / "BID_candles_min_1.bi5"
+    return (base / instrument / f"{year:04d}" / f"{month:02d}"
+            / f"{day:02d}_BID_candles_min_1.bi5")
 
 
-def download_reference_m1(
+def download_reference_day(
     instrument: str,
     year: int,
     month: int,
+    day: int,
     *,
     cfg: FeedConfig | None = None,
     root: Path | None = None,
 ) -> Path | None:
-    """Baixa o arquivo mensal de M1. Devolve None se o servidor disser 404."""
+    """Baixa o M1 de um dia. Devolve None se o servidor disser 404."""
     cfg = cfg or FeedConfig.load()
-    dest = reference_path(instrument, year, month, root)
+    dest = reference_path(instrument, year, month, day, root)
     if dest.exists():
         return dest
 
-    payload = fetch(cfg, reference_url(cfg, instrument, year, month), RateLimiter(cfg.min_interval_s))
+    payload = fetch(
+        cfg, reference_url(cfg, instrument, year, month, day),
+        RateLimiter(cfg.min_interval_s),
+    )
     if payload is None:
         return None
     write_atomic(dest, payload)
     return dest
 
 
-def decode_candles(
-    payload: bytes, year: int, month: int, spec: InstrumentSpec
+def load_reference_month(
+    instrument: str,
+    year: int,
+    month: int,
+    spec: InstrumentSpec,
+    *,
+    cfg: FeedConfig | None = None,
+    root: Path | None = None,
 ) -> pd.DataFrame:
-    """Decodifica o arquivo mensal de M1 em barras com o schema de `bars.py`."""
+    """Baixa e decodifica o mes inteiro, dia a dia.
+
+    Dia ausente e pulado em silencio: fim de semana nao publica candle, e isso
+    nao e falha. O que interessa e haver rotulos em comum suficientes — quem
+    decide se houve comparacao e `exigir_comparacao()`.
+    """
+    import calendar
+
+    partes = []
+    for day in range(1, calendar.monthrange(year, month)[1] + 1):
+        p = download_reference_day(
+            instrument, year, month, day, cfg=cfg, root=root
+        )
+        if p is None:
+            continue
+        df = decode_candles(p.read_bytes(), year, month, day, spec)
+        if not df.empty:
+            partes.append(df)
+    if not partes:
+        return pd.DataFrame(
+            columns=["ts_utc", "open", "high", "low", "close", "volume"]
+        )
+    return pd.concat(partes, ignore_index=True).sort_values(
+        "ts_utc", kind="stable", ignore_index=True
+    )
+
+
+def decode_candles(
+    payload: bytes, year: int, month: int, day: int, spec: InstrumentSpec
+) -> pd.DataFrame:
+    """Decodifica o M1 de um DIA em barras com o schema de `bars.py`."""
     from riser.data.ticks import _decompress  # mesma descompressao dos ticks
 
     blob = _decompress(payload)
@@ -140,7 +188,8 @@ def decode_candles(
 
     n = len(blob) // CANDLE_SIZE
     arr = np.frombuffer(blob, dtype=">i4,>i4,>i4,>i4,>i4,>f4", count=n)
-    base = datetime(year, month, 1, tzinfo=timezone.utc)
+    # Offset conta a partir do inicio do DIA, nao do mes: o arquivo e diario.
+    base = datetime(year, month, day, tzinfo=timezone.utc)
 
     o = arr["f1"].astype("float64") / spec.divisor
     c = arr["f2"].astype("float64") / spec.divisor

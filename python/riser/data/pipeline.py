@@ -684,18 +684,15 @@ def etapa_validate(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, fo
     """
     from riser.harness.dukascopy_reference import (
         compare_ohlc,
-        decode_candles,
-        download_reference_m1,
+        load_reference_month,
         top_divergences,
     )
 
-    ref_path = download_reference_m1(instrumento, ano, mes)
-    if ref_path is None:
+    spec = InstrumentSpec.load(instrumento)
+    referencia = load_reference_month(instrumento, ano, mes, spec)
+    if referencia.empty:
         log.warn(event="validate_sem_referencia", instrumento=instrumento, ano=ano, mes=mes)
         return {"estado": "sem_referencia"}
-
-    spec = InstrumentSpec.load(instrumento)
-    referencia = decode_candles(ref_path.read_bytes(), ano, mes, spec)
 
     nossas_path = bars_path(instrumento, "M1", ano, mes)
     if not nossas_path.exists():
