@@ -802,9 +802,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force", action="store_true",
                    help="refaz mes cujo artefato ja existe (nao vale para download, "
                         "que sempre pula arquivo horario ja baixado)")
+    p.add_argument("--recentes-primeiro", action="store_true",
+                   help="processa do mes mais recente para o mais antigo. Para o "
+                        "download de um historico longo e o que se quer: uma "
+                        "corrida interrompida deixa o periodo util pronto, em vez "
+                        "de deixar o inicio do historico completo e o fim vazio")
     args = p.parse_args(argv)
 
     meses = meses_no_intervalo(args.de, args.ate)
+    if args.recentes_primeiro:
+        meses.reverse()
     log = make_logger()
     log.boot(comando=" ".join(argv or sys.argv[1:]), config=str(CONFIG_PATH))
 
