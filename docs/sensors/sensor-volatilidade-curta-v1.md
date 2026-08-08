@@ -147,13 +147,19 @@ O harness deve provar isto empiricamente: alimentar ticks um a um e verificar qu
 Formato JSONL, schema idêntico em Python e MQL5. Um ficheiro por dia por conta.
 
 ```
-logs/svc/{acct}/{YYYY-MM-DD}.jsonl
+logs/svc/{alias}/{hash-login}/{YYYY-MM-DD}.jsonl
 ```
+
+O nível é o **login**, não `{acct}`. `acct` é o tipo de conta (`standard`,
+`raw`) e duas contas do mesmo tipo colidiriam no mesmo ficheiro. Ver o envelope
+obrigatório em `docs/schemas/log-schema.md`, que é a fonte de verdade do
+caminho e dos campos.
 
 Registo:
 
 ```json
 {"ts":"2026-08-08T13:45:22.317Z","sensor":"SVC","ver":"1.0.0",
+ "account_hash":"7b41c9e2","broker_id":"exness-standard",
  "symbol":"XAUUSDm","acct":"standard","value":0.72,"state":"EXPANDING",
  "dq":0.61,"conf":0.90,"fresh_ms":180,
  "c":{"tr":0.81,"rg":0.68,"dsp":0.44,"er":0.61,"spr":0.55,"atr":0.49},

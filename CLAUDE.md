@@ -105,6 +105,20 @@ Se `git status` mostrar arquivo de dado, o `.gitignore` está errado — corrija
 Todo backtest roda contra os perfis de `config/cost_profiles.yaml` e reporta as
 curvas lado a lado. "Standard ou Raw" é coluna de relatório, não decisão.
 
+### 9. Ambiente é reproduzível ou não é ambiente
+
+Instalação sempre por `requirements.lock.txt`. O `pyproject.toml` declara
+intenção; o lock define a realidade. Os dois PCs devem produzir resultado
+idêntico a partir dos mesmos ticks.
+
+`requires-python` tem teto, não só piso. Sem teto, um venv mais novo resolve
+versões diferentes em silêncio e a divergência aparece meses depois, num
+resultado de backtest, longe da causa.
+
+Versão nova de dependência não entra por conveniência: entra por decisão, com
+o lock regenerado nos dois PCs e uma comparação de agregação sobre a mesma
+amostra de ticks antes de ser aceita.
+
 ---
 
 ## Estrutura e caminhos
@@ -153,6 +167,21 @@ Regras que decorrem disto:
   vez de continuar escrevendo no diretório anterior.
 - Contas diferentes da mesma corretora exigem terminais instalados em pastas
   separadas, cada um com seu alias. Uma instalação, uma conta ativa.
+
+### Regra de `.gitignore` que se refere à raiz precisa de barra inicial
+
+Sem âncora, a regra casa diretório de código em qualquer nível — e no Windows
+`core.ignorecase` faz `Logs/` casar `logs/` também.
+
+Ao adicionar regra nova, teste com `git check-ignore` contra um caminho de
+código plausível:
+
+```powershell
+git check-ignore -v python/riser/logs/writer.py
+```
+
+O modo de falha é silencioso: o arquivo simplesmente não aparece em
+`git status`, e o problema só se manifesta ao clonar em outro PC.
 
 Includes usam o prefixo do projeto: `#include <RISER\Core\Sensor.mqh>`
 

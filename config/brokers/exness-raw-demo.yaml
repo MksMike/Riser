@@ -46,5 +46,7 @@ policy:
   scalping_allowed: true             # VERIFICAR nos termos da corretora
 
 # Feed de demo: cotações servem para medir spread. NÃO servem para medir
-# slippage nem qualidade de execução. Marcar todo log deste terminal com
-# source: demo.
+# slippage nem qualidade de execução. Marcar todo log desta CONTA com
+# source: demo — não do terminal. O mesmo terminal serve conta demo e conta
+# real; quem determina `source` é o ACCOUNT_LOGIN resolvido em runtime,
+# comparado com is_demo deste manifesto. Divergência é erro, não aviso.

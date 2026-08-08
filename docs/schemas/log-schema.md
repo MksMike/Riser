@@ -21,10 +21,19 @@ Toda linha, de todo componente, carrega estes campos. Sem exceção.
 | `src` | string | `py` ou `mql5` |
 | `comp` | string | componente que escreveu (`svc`, `guardian`, `trailing`, `dash`) |
 | `lvl` | string | `debug` `info` `warn` `error` |
+| `account_hash` | string | hash de `ACCOUNT_LOGIN`, resolvido em runtime. Nunca o login em claro |
+| `broker_id` | string | `id` do manifesto em `config/brokers/` (ex: `exness-standard`) |
 
 **Por que UTC e hora de servidor juntos:** cada corretora tem fuso próprio. Sem
 os dois, dados de corretoras diferentes não se alinham — e o alinhamento é a
 premissa da validação cross-feed.
+
+**Por que `account_hash` e `broker_id`:** alias de terminal não identifica quem
+gerou a linha. Um terminal troca de conta sem que nada no sistema de arquivos
+mude, e `acct` diz apenas o *tipo* (`standard`, `raw`) — duas contas do mesmo
+tipo colidem. `account_hash` é a identidade; `broker_id` amarra a linha ao
+manifesto contra o qual ela foi produzida, que é o que torna custo e spread
+comparáveis entre corretoras.
 
 **Por que `build_hash` e `config_hash`:** sem eles, um resultado ruim não se
 distingue de uma configuração errada. Este é o campo que torna meses de teste
@@ -35,10 +44,32 @@ interpretáveis em vez de um monte de arquivos.
 ## Caminho
 
 ```
-C:\dev\RISER-data\logs\<comp>\<alias-terminal>\<YYYY-MM-DD>.jsonl
+C:\dev\RISER-data\logs\<comp>\<alias>\<hash-login>\<YYYY-MM-DD>.jsonl
 ```
 
 Nunca dentro do repositório.
+
+O alias nomeia o terminal; `<hash-login>` nomeia a conta. Os dois níveis são
+obrigatórios, nesta ordem — ver o invariante *Dado do MT5 é particionado por
+conta, não por terminal* em `CLAUDE.md`. Junction é por terminal, conta é por
+login: sem o segundo nível, duas contas com custo e execução diferentes
+escrevem no mesmo diretório e não há como separar depois.
+
+`<hash-login>` usa o mesmo valor de `account_hash` do envelope. Se os dois
+divergirem numa linha, o arquivo está corrompido.
+
+### Troca de conta durante a execução
+
+O diretório de destino é resolvido uma única vez, na inicialização, depois de
+ler `ACCOUNT_LOGIN`.
+
+Se o login mudar enquanto o componente executa, ele **encerra**. Não continua
+escrevendo no diretório anterior, não migra, não abre o novo arquivo no meio da
+execução — registra `E2002 E_ACCOUNT_CHANGED_MIDRUN` com `lvl: error` e para.
+
+Continuar escrevendo misturaria duas contas no mesmo arquivo sob um único
+`run_id`, e nenhuma análise posterior conseguiria desfazer isso. Encerrar perde
+alguns minutos de coleta; continuar contamina o histórico inteiro daquele dia.
 
 ---
 
@@ -61,7 +92,8 @@ problemas de corretora nova — o arquivo diz uma coisa, o servidor faz outra.
 ```json
 {"ts":"2026-08-08T13:45:22.317Z","ts_srv":"2026-08-08T16:45:22.317",
  "run_id":"a3f2...","build_hash":"9c1e4b7","config_hash":"5d2a","src":"mql5",
- "comp":"svc","lvl":"info","ver":"1.0.0","symbol":"XAUUSDm","acct":"standard",
+ "comp":"svc","lvl":"info","account_hash":"7b41c9e2","broker_id":"exness-standard",
+ "ver":"1.0.0","symbol":"XAUUSDm","acct":"standard",
  "source":"live","value":0.72,"state":"EXPANDING","dq":0.61,"conf":0.90,
  "fresh_ms":180,"c":{"tr":0.81,"rg":0.68,"dsp":0.44,"er":0.61,"spr":0.55,
  "atr":0.49},"base":0.31,"lat_us":142}
@@ -69,6 +101,11 @@ problemas de corretora nova — o arquivo diz uma coisa, o servidor faz outra.
 
 `c` sempre presente. Logar só `value` torna impossível diagnosticar qual
 componente errou.
+
+`acct` e `account_hash` não são redundantes: `acct` é o **tipo** de conta
+(`standard`, `raw`), que agrupa; `account_hash` é a **identidade**, que separa.
+`source` (`live` ou `demo`) é propriedade da conta, não do terminal — o mesmo
+terminal serve as duas.
 
 ---
 
@@ -110,6 +147,7 @@ converter trinta `Print()` improvisados depois é trabalho de semanas.
 ```
 E1xxx  corretora / símbolo      E1002  E_STOPS_LEVEL_VIOLATION
 E2xxx  conta / margem           E2001  E_ACCOUNT_MODE_MISMATCH
+                                E2002  E_ACCOUNT_CHANGED_MIDRUN
 E3xxx  sensor                   E3001  E_SENSOR_STALE
 E4xxx  execução                 E4001  E_ORDER_REJECTED
 E5xxx  dado / log               E5001  E_SCHEMA_MISMATCH
