@@ -34,6 +34,12 @@ O envelope obrigatório do log ganha `account_hash` (identidade) e `broker_id`
 (manifesto contra o qual a linha foi produzida). O login entra sempre com hash,
 nunca em claro.
 
+> **Revisão, mesma data.** `broker_id` foi desdobrado em dois campos ao
+> implementar o downloader Dukascopy: `feed_id` responde *de onde o dado veio*,
+> `broker_id` responde *onde isto executou* e é `null` quando não há execução.
+> Um único campo servindo as duas perguntas faria um feed de referência entrar
+> como corretora numa agregação de custo. Ver `docs/schemas/log-schema.md`.
+
 O diretório de destino é resolvido **uma vez**, na inicialização. Se o login
 mudar durante a execução, o componente registra
 `E2002 E_ACCOUNT_CHANGED_MIDRUN` com `lvl: error` e **encerra**. Não migra, não

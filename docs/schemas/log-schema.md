@@ -16,28 +16,77 @@ Toda linha, de todo componente, carrega estes campos. Sem exceção.
 | `ts` | string | ISO 8601 com milissegundos, **UTC** |
 | `ts_srv` | string | mesmo instante em hora do servidor |
 | `run_id` | string | UUID gerado na inicialização, constante durante a execução |
-| `build_hash` | string | 7 primeiros do commit; `dirty` se houver alteração não commitada |
+| `build_hash` | string | 7 primeiros do commit, com sufixo `-dirty` se houver alteração não commitada (`9c1e4b7-dirty`) |
 | `config_hash` | string | hash do arquivo de configuração efetivo |
 | `src` | string | `py` ou `mql5` |
 | `comp` | string | componente que escreveu (`svc`, `guardian`, `trailing`, `dash`) |
 | `lvl` | string | `debug` `info` `warn` `error` |
-| `account_hash` | string | hash de `ACCOUNT_LOGIN`, resolvido em runtime. Nunca o login em claro |
-| `broker_id` | string | `id` do manifesto em `config/brokers/` (ex: `exness-standard`) |
+| `account_hash` | string \| null | hash de `ACCOUNT_LOGIN`, resolvido em runtime. Nunca o login em claro |
+| `feed_id` | string | **de onde o dado veio** (`dukascopy`, `exness-standard`) |
+| `broker_id` | string \| null | **onde isto executou**: `id` do manifesto em `config/brokers/`. `null` quando não há execução |
 
 **Por que UTC e hora de servidor juntos:** cada corretora tem fuso próprio. Sem
 os dois, dados de corretoras diferentes não se alinham — e o alinhamento é a
 premissa da validação cross-feed.
 
-**Por que `account_hash` e `broker_id`:** alias de terminal não identifica quem
-gerou a linha. Um terminal troca de conta sem que nada no sistema de arquivos
-mude, e `acct` diz apenas o *tipo* (`standard`, `raw`) — duas contas do mesmo
-tipo colidem. `account_hash` é a identidade; `broker_id` amarra a linha ao
-manifesto contra o qual ela foi produzida, que é o que torna custo e spread
-comparáveis entre corretoras.
+**Por que `account_hash`:** alias de terminal não identifica quem gerou a linha.
+Um terminal troca de conta sem que nada no sistema de arquivos mude, e `acct`
+diz apenas o *tipo* (`standard`, `raw`) — duas contas do mesmo tipo colidem.
+`acct` agrupa; `account_hash` identifica.
+
+**Por que `feed_id` e `broker_id` são campos separados:** respondem perguntas
+diferentes, e um único campo respondendo as duas produz erro silencioso.
+
+| campo | pergunta | Dukascopy | coleta na Exness |
+|---|---|---|---|
+| `feed_id` | de onde o dado veio | `dukascopy` | `exness-standard` |
+| `broker_id` | onde isto executou | `null` | `exness-standard` |
+
+Coletando na Exness os dois são preenchidos e iguais, o que faz parecer que um
+bastaria. Não basta: a Dukascopy é feed de referência, sem execução, sem custo e
+sem conta. Se ela entrasse em `broker_id`, uma agregação por corretora para
+comparar custo a incluiria como se fosse uma — resultado plausível e errado, que
+é a família de erro mais cara deste projeto.
+
+`broker_id` amarra a linha ao manifesto contra o qual ela foi produzida, e é o
+que torna custo e spread comparáveis entre corretoras. `feed_id` é o eixo do
+critério 7 do SVC: robustez cross-feed se agrupa por onde o dado veio, não por
+onde se executou.
 
 **Por que `build_hash` e `config_hash`:** sem eles, um resultado ruim não se
 distingue de uma configuração errada. Este é o campo que torna meses de teste
 interpretáveis em vez de um monte de arquivos.
+
+**Por que `build_hash` carrega o sha mesmo quando sujo:** `dirty` sozinho
+responde *"havia alteração"* e destrói *"sobre qual base"* — que é a pergunta
+que o campo existe para responder. O sha do commit base continua sendo a única
+âncora entre um resultado sujo e o código que o produziu.
+
+---
+
+## Ausência deliberada é `null`, nunca omissão
+
+Campo do envelope que não se aplica a um componente é escrito com valor `null`.
+Nunca omitido.
+
+Nem todo componente tem conta, corretora ou servidor: o downloader de um feed
+público não tem nenhum dos três. Omitir o campo nesse caso torna a ausência
+deliberada indistinguível de um campo esquecido por bug — e o consumidor que lê
+o arquivo meses depois não tem como saber qual dos dois aconteceu.
+
+Com `null` explícito, a linha afirma *"este componente não tem isto"*. Sem o
+campo, ela não afirma nada.
+
+Vale para todo o envelope. Os casos hoje conhecidos:
+
+| campo | `null` quando |
+|---|---|
+| `ts_srv` | não há servidor de corretora de onde ler a hora |
+| `account_hash` | o componente não opera sobre uma conta |
+| `broker_id` | não houve execução (feed de referência, análise offline) |
+
+O diretório de log segue a mesma regra: sem conta, o nível vira `no-account`,
+explícito, em vez de desaparecer.
 
 ---
 
@@ -92,7 +141,8 @@ problemas de corretora nova — o arquivo diz uma coisa, o servidor faz outra.
 ```json
 {"ts":"2026-08-08T13:45:22.317Z","ts_srv":"2026-08-08T16:45:22.317",
  "run_id":"a3f2...","build_hash":"9c1e4b7","config_hash":"5d2a","src":"mql5",
- "comp":"svc","lvl":"info","account_hash":"7b41c9e2","broker_id":"exness-standard",
+ "comp":"svc","lvl":"info","account_hash":"7b41c9e2",
+ "feed_id":"exness-standard","broker_id":"exness-standard",
  "ver":"1.0.0","symbol":"XAUUSDm","acct":"standard",
  "source":"live","value":0.72,"state":"EXPANDING","dq":0.61,"conf":0.90,
  "fresh_ms":180,"c":{"tr":0.81,"rg":0.68,"dsp":0.44,"er":0.61,"spr":0.55,

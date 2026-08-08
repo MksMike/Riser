@@ -181,7 +181,7 @@ Registo:
 
 ```json
 {"ts":"2026-08-08T13:45:22.317Z","sensor":"SVC","ver":"1.0.0",
- "account_hash":"7b41c9e2","broker_id":"exness-standard",
+ "account_hash":"7b41c9e2","feed_id":"exness-standard","broker_id":"exness-standard",
  "symbol":"XAUUSDm","acct":"standard","value":0.72,"state":"EXPANDING",
  "dq":0.61,"conf":0.90,"fresh_ms":180,
  "c":{"tr":0.81,"rg":0.68,"dsp":0.44,"er":0.61,"spr":0.55,"atr":0.49},

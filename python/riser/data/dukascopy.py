@@ -46,6 +46,28 @@ class DukascopyError(RuntimeError):
     """Falha de download que sobreviveu a todas as tentativas."""
 
 
+def make_logger(**kwargs: object) -> JsonlLogger:
+    """Logger com o contexto certo para este feed.
+
+    `broker_id=None` de proposito: a Dukascopy e feed de referencia, sem
+    execucao, sem custo e sem conta. Poe-la em `broker_id` faria uma agregacao
+    por corretora, para comparar custo, incluir algo que nunca executou nada.
+
+    Existe como funcao para que o uso correto seja o caminho facil — quem
+    instanciar o JsonlLogger a mao pode passar o campo errado sem que nada
+    reclame.
+    """
+    return JsonlLogger(
+        "dukascopy",
+        alias=FEED,
+        feed_id=FEED,
+        broker_id=None,
+        account_hash=None,
+        config_paths=(CONFIG_PATH,),
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
 @dataclass(frozen=True)
 class FeedConfig:
     base_url: str

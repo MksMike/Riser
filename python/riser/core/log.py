@@ -27,10 +27,9 @@ LEVELS = ("debug", "info", "warn", "error")
 def build_hash() -> str:
     """7 primeiros do commit, com sufixo `-dirty` se houver alteracao pendente.
 
-    O schema pede "`dirty` se houver alteracao nao commitada". Manter o sha
-    junto e uma extensao deliberada: perder o commit base torna impossivel
-    saber sobre que codigo o resultado sujo foi produzido, que e justamente a
-    pergunta que o campo existe para responder.
+    O sha fica mesmo quando sujo: `dirty` sozinho responde "havia alteracao" e
+    destroi "sobre qual base", que e a pergunta que o campo existe para
+    responder.
 
     Sem git disponivel, devolve `nogit`. Nunca levanta: um log que se recusa a
     escrever porque o git falhou e pior que um log com procedencia parcial.
@@ -86,6 +85,7 @@ class JsonlLogger:
         *,
         alias: str,
         config_paths: tuple[Path | str, ...] = (),
+        feed_id: str,
         account_hash: str | None = None,
         broker_id: str | None = None,
         server_tz_offset_h: float | None = None,
@@ -94,6 +94,12 @@ class JsonlLogger:
         self.comp = comp
         self.alias = alias
         self.account_hash = account_hash
+        # feed_id: de onde o dado veio.  broker_id: onde isto executou.
+        # Coletando na Exness os dois sao iguais, o que faz parecer que um
+        # bastaria. Nao basta: com a Dukascopy dentro de broker_id, agregar por
+        # corretora para comparar custo incluiria um feed sem execucao, sem
+        # custo e sem conta — resultado plausivel e errado.
+        self.feed_id = feed_id
         self.broker_id = broker_id
         self.server_tz_offset_h = server_tz_offset_h
         self.run_id = run_id or str(uuid.uuid4())
@@ -118,9 +124,10 @@ class JsonlLogger:
     def _envelope(self, lvl: str) -> dict[str, Any]:
         ts = _now_iso_utc()
         if self.server_tz_offset_h is None:
-            # Componente que nao fala com servidor de corretora nao tem hora de
-            # servidor. Null explicito, campo presente: ausencia deliberada tem
-            # de ser distinguivel de campo esquecido.
+            # Ausencia deliberada e null, nunca omissao (log-schema.md).
+            # Componente sem servidor de corretora nao tem hora de servidor;
+            # omitir o campo tornaria isso indistinguivel de um bug, e quem le
+            # o arquivo meses depois nao teria como saber qual dos dois foi.
             ts_srv = None
         else:
             secs = int(self.server_tz_offset_h * 3600)
@@ -138,6 +145,7 @@ class JsonlLogger:
             "comp": self.comp,
             "lvl": lvl,
             "account_hash": self.account_hash,
+            "feed_id": self.feed_id,
             "broker_id": self.broker_id,
         }
 
