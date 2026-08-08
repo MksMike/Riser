@@ -1,9 +1,13 @@
 """Downloader de ticks brutos da Dukascopy.
 
-Este modulo NAO parseia nada. Ele busca o `.bi5` por hora e o guarda intacto.
-A separacao e deliberada: baixar uma vez, parsear muitas. Um bug no parser
-custa um reprocessamento local; um bruto apagado custa uma refeitura completa
-do download, e horas antigas saem do ar sem aviso.
+Este modulo NAO parseia nada. Ele busca o `.bi5` de cada arquivo horario e o
+guarda intacto. A separacao e deliberada: baixar uma vez, parsear muitas. Um bug
+no parser custa um reprocessamento local; um bruto apagado custa uma refeitura
+completa do download, e arquivo antigo sai do ar sem aviso.
+
+VOCABULARIO: a unidade de particionamento do feed e o ARQUIVO HORARIO. "hora"
+fica reservada para duracao — num relatorio que fala das duas coisas, "faltam
+385 horas" se le como tempo de execucao e o engano passa despercebido.
 
 Ordem cronologica reversa — mes mais recente primeiro. O dado recente e o que
 descreve o regime atual do mercado, e um download de dois anos interrompido no
@@ -33,12 +37,14 @@ from riser.core.paths import raw_dir, repo_root
 FEED = "dukascopy"
 CONFIG_PATH = repo_root() / "config" / "feeds" / "dukascopy.yaml"
 
-# Marcador de hora que o servidor declara inexistente. Zero bytes, ao lado do
-# lugar onde o .bi5 estaria. Sem ele, uma retomada volta a pedir as mesmas
-# horas ausentes para sempre — e ha muitas: todo fim de semana e feriado.
+# Marcador de arquivo horario que o servidor declara inexistente. Zero bytes,
+# ao lado do lugar onde o .bi5 estaria. Sem ele, uma retomada volta a pedir os
+# mesmos ausentes para sempre.
 #
 # NAO se usa um .bi5 vazio para isso: 200 com zero bytes e uma resposta
-# legitima e significa "hora sem tick", que e dado, nao ausencia.
+# legitima e significa "arquivo horario sem tick", que e dado, nao ausencia.
+# MEDIDO: neste feed o 200 vazio e a regra e o 404 quase nao aparece. Ver a
+# contagem de julho em config/feeds/dukascopy.yaml.
 ABSENT_SUFFIX = ".absent"
 
 
@@ -105,7 +111,7 @@ class FeedConfig:
 
 
 def hour_url(cfg: FeedConfig, instrument: str, hour: datetime) -> str:
-    """Monta a URL de uma hora.
+    """Monta a URL de um arquivo horario.
 
     ARMADILHA: o caminho da Dukascopy usa o mes com base ZERO. Janeiro e `00`,
     dezembro e `11`. A conversao acontece so aqui, num lugar unico e testado —
@@ -140,12 +146,49 @@ def raw_path(instrument: str, hour: datetime, root: Path | None = None) -> Path:
     )
 
 
-def hours_reverse(start: datetime, end: datetime) -> Iterator[datetime]:
-    """Horas de [start, end), da MAIS RECENTE para a mais antiga.
+def formatar_duracao(segundos: float) -> str:
+    """Duracao legivel: 45s, 26min, 2h10, 3d04h.
 
-    Semiaberto no fim: `end` exclusivo evita baixar a hora corrente, que ainda
-    esta a ser escrita pelo servidor e devolveria um arquivo parcial que a
-    retomada trataria como completo.
+    Existe porque "faltam 385" e um numero sem escala. Um relatorio que diz
+    "385 arquivos horarios restantes, ~26min" responde de imediato o que um
+    numero cru obriga a calcular na cabeca — e na corrida de dois anos essa
+    conta aparece em todo relatorio.
+    """
+    s = max(0.0, float(segundos))
+    if s < 90:
+        return f"{s:.0f}s"
+    if s < 90 * 60:
+        return f"{s / 60.0:.0f}min"
+    # Arredonda o resto em vez de truncar: 19h29,6 exibido como 19h29 sugere
+    # precisao que a estimativa nao tem, e erra para menos justo onde o numero
+    # serve para dimensionar.
+    if s < 48 * 3600:
+        h, resto = divmod(int(round(s / 60.0)), 60)
+        return f"{h}h{resto:02d}"
+    d, resto = divmod(int(round(s / 3600.0)), 24)
+    return f"{d}d{resto:02d}h"
+
+
+def estimativa_restante(arquivos_pendentes: int, intervalo_s: float) -> str:
+    """Piso de duracao: arquivos que ainda precisam de rede x intervalo configurado.
+
+    E PISO, nao previsao. Ignora tempo de resposta do servidor e retentativas —
+    a medicao de campo registrada no `dukascopy.yaml` mostrou tempo por
+    requisicao acima do intervalo puro. Serve para dimensionar, nao para
+    prometer.
+    """
+    return formatar_duracao(arquivos_pendentes * intervalo_s)
+
+
+def hours_reverse(start: datetime, end: datetime) -> Iterator[datetime]:
+    """Arquivos horarios de [start, end), do MAIS RECENTE para o mais antigo.
+
+    Rende o instante que identifica cada arquivo horario do feed — a unidade de
+    particionamento, nao uma medida de duracao.
+
+    Semiaberto no fim: `end` exclusivo evita baixar o arquivo da hora corrente,
+    que ainda esta a ser escrito pelo servidor e devolveria conteudo parcial que
+    a retomada trataria como completo.
     """
     if start.tzinfo is None or end.tzinfo is None:
         raise ValueError("start e end precisam ser timezone-aware em UTC")
@@ -166,7 +209,7 @@ def month_start(dt: datetime) -> datetime:
 def last_complete_month(now: datetime) -> tuple[datetime, datetime]:
     """[inicio, fim) do ultimo mes inteiro terminado antes de `now`.
 
-    "Completo" importa: o mes corrente tem horas que ainda nao existem, e uma
+    "Completo" importa: o mes corrente tem arquivos que ainda nao existem, e uma
     distribuicao de spread calculada sobre mes parcial nao e comparavel com as
     dos meses cheios.
     """
@@ -207,9 +250,9 @@ def fetch(
 ) -> bytes | None:
     """Busca uma URL. Devolve os bytes, ou None se o servidor disser 404.
 
-    404 nao e retentado: significa "esta hora nao existe", nao "tente de novo".
+    404 nao e retentado: significa "este arquivo nao existe", nao "tente de novo".
     Retentar 404 cinco vezes com backoff transformaria um fim de semana normal
-    em minutos de espera inutil, multiplicados por cada hora do periodo.
+    em minutos de espera inutil, multiplicados por cada arquivo do periodo.
 
     **Todo retry e logado.** Um retry que nao aparece em lugar nenhum torna a
     unica evidencia de que o servidor esta a recusar pedidos ser a lentidao — e
@@ -237,7 +280,7 @@ def fetch(
             ultima = exc
 
         # Backoff exponencial com jitter. O jitter existe para que uma retomada
-        # de milhares de horas nao sincronize as tentativas num padrao que o
+        # de milhares de arquivos nao sincronize as tentativas num padrao que o
         # servidor leia como abuso.
         espera = min(cfg.backoff_base_s * (2**tentativa), cfg.backoff_max_s)
         espera *= 0.5 + random.random()
@@ -275,18 +318,18 @@ def download_hour(
     root: Path | None = None,
     logger: JsonlLogger | None = None,
 ) -> str:
-    """Baixa uma hora. Devolve `ja_tinha`, `ja_ausente`, `ok`, `empty` ou `absent`.
+    """Baixa um arquivo horario. Devolve `ja_tinha`, `ja_ausente`, `ok`, `empty` ou `absent`.
 
     Retomavel por construcao: se o bruto ou o marcador de ausencia ja existem,
     nao ha requisicao nenhuma.
 
     `ja_tinha` e `ja_ausente` foram um `skip` unico ate se descobrir que os dois
-    nao sao a mesma coisa. Um diz "esta hora ja esta no disco"; o outro, "o
-    servidor ja disse que esta hora nunca existiu". Somados, viram um numero que
+    nao sao a mesma coisa. Um diz "este arquivo ja esta no disco"; o
+    outro, "o servidor ja disse que este arquivo nunca existiu". Somados, viram um numero que
     parece medir progresso e nao mede: numa retomada de dois anos, um mes inteiro
     de fim de semana marcado como ausente ficaria indistinguivel de um mes
     inteiro de dado baixado. E e justamente esse numero que decide se a corrida
-    terminou, quando conferir dezessete mil horas a mao nao e opcao.
+    terminou, quando conferir dezessete mil arquivos a mao nao e opcao.
     """
     dest = raw_path(instrument, hour, root)
     marker = dest.with_name(dest.name + ABSENT_SUFFIX)
@@ -317,7 +360,7 @@ def download_range(
     logger: JsonlLogger | None = None,
     progress: bool = True,
 ) -> dict[str, int]:
-    """Baixa [start, end) em ordem cronologica reversa.
+    """Baixa os arquivos horarios de [start, end), em ordem cronologica reversa.
 
     Devolve a contagem por desfecho. Nao levanta ao fim de uma hora que falhou
     depois de todas as tentativas: registra, conta e segue — uma hora
@@ -335,54 +378,71 @@ def download_range(
             )
         start = piso
 
-    horas = list(hours_reverse(start, end))
-    total = len(horas)
+    marcas = list(hours_reverse(start, end))
+    total = len(marcas)
+
+    # Quantos arquivos horarios ainda precisam de rede. Contado UMA vez e
+    # decrementado no laco: recontar a cada impressao seria quadratico, e em
+    # dezessete mil arquivos isso deixa de ser detalhe.
+    pendentes = 0
+    for h in marcas:
+        p = raw_path(instrument, h, root)
+        if not p.exists() and not p.with_name(p.name + ABSENT_SUFFIX).exists():
+            pendentes += 1
     # `erro` e esgotamento de tentativas: falha de REDE. Nao deixa arquivo nem
-    # marcador de proposito — a hora continua pendente e a proxima passada a
-    # tenta de novo. Confundi-la com `absent`, que e o servidor dizendo que a
-    # hora nunca existiu, faria a corrida ou insistir para sempre no que nao
-    # existe, ou desistir para sempre do que so falhou uma vez.
+    # marcador de proposito — o arquivo horario continua pendente e a proxima
+    # passada o tenta de novo. Confundi-lo com `absent`, que e o servidor
+    # dizendo que o arquivo nunca existiu, faria a corrida ou insistir para
+    # sempre no que nao existe, ou desistir do que so falhou uma vez.
     tally = {"ok": 0, "empty": 0, "absent": 0, "ja_tinha": 0, "ja_ausente": 0, "erro": 0}
     bytes_novos = 0
 
     if logger:
         logger.info(
             event="download_start", feed=FEED, instrument=instrument,
-            desde=start.isoformat(), ate=end.isoformat(), horas=total,
+            desde=start.isoformat(), ate=end.isoformat(),
+            arquivos_horarios=total, arquivos_pendentes=pendentes,
+            estimativa_piso=estimativa_restante(pendentes, cfg.min_interval_s),
             ordem="cronologica_reversa",
         )
 
-    for n, hora in enumerate(horas, 1):
+    for n, marca in enumerate(marcas, 1):
         try:
             desfecho = download_hour(
-                cfg, instrument, hora, limiter, root=root, logger=logger
+                cfg, instrument, marca, limiter, root=root, logger=logger
             )
             tally[desfecho] += 1
             if desfecho in ("ok", "empty"):
-                bytes_novos += raw_path(instrument, hora, root).stat().st_size
+                bytes_novos += raw_path(instrument, marca, root).stat().st_size
         except DukascopyError as exc:
             tally["erro"] += 1
             desfecho = "erro"
             if logger:
                 logger.error(
                     "E5002", event="download_fail", instrument=instrument,
-                    hora=hora.isoformat(), msg=str(exc),
+                    hora=marca.isoformat(), msg=str(exc),
                 )
+
+        # Skip nao consome rede, entao nao entra na estimativa.
+        if desfecho not in ("ja_tinha", "ja_ausente"):
+            pendentes -= 1
 
         if progress and (n % 25 == 0 or n == total or desfecho == "erro"):
             pct = 100.0 * n / total if total else 100.0
             print(
-                f"[{n:>6}/{total}] {pct:5.1f}%  {hora:%Y-%m-%d %Hh}  {desfecho:<10}"
-                f"  ok={tally['ok']} vazias={tally['empty']} ausentes={tally['absent']}"
+                f"[{n:>6}/{total}] {pct:5.1f}%  {marca:%Y-%m-%d %Hh}  {desfecho:<10}"
+                f"  ok={tally['ok']} vazios={tally['empty']} ausentes={tally['absent']}"
                 f" ja_tinha={tally['ja_tinha']} ja_ausente={tally['ja_ausente']}"
-                f" erros={tally['erro']}",
+                f" erros={tally['erro']}"
+                f"  | faltam {pendentes} arq, ~{estimativa_restante(pendentes, cfg.min_interval_s)}",
                 flush=True,
             )
 
     if logger:
         logger.info(
             event="download_done", feed=FEED, instrument=instrument,
-            horas=total, bytes_novos=bytes_novos, **tally,
+            arquivos_horarios=total, arquivos_pendentes=pendentes,
+            bytes_novos=bytes_novos, **tally,
         )
     return tally
 

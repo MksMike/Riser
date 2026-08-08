@@ -77,11 +77,12 @@ politeness:
 # `falhou` e esgotamento de tentativas por rede. Nao grava marcador de
 # proposito: a hora continua pendente e a passada seguinte a tenta de novo.
 outcomes:
+  unit: hourly_file           # a unidade de particionamento, nao duracao
   measured_on: "2026-07"
   instrument_measured: XAUUSD
-  hours_present: 230
-  hours_empty: 108
-  hours_absent_404: 0
+  hourly_files_present: 230
+  hourly_files_empty: 108
+  hourly_files_absent_404: 0
   empty_is_data: true
 
 instruments:

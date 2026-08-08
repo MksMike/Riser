@@ -405,7 +405,7 @@ def _hora(ano, mes, dia, h):
 
 
 def test_completude_separa_os_quatro_estados(data_root, monkeypatch):
-    """presente, vazia, ausente e falhou. So o ultimo pede acao."""
+    """presente, vazio, ausente e falhou. So o ultimo pede acao."""
     from riser.data.dukascopy import ABSENT_SUFFIX, raw_path
     from riser.data.pipeline import completude
 
@@ -425,7 +425,7 @@ def test_completude_separa_os_quatro_estados(data_root, monkeypatch):
 
     r = completude("XAUUSD", 2026, 7)
     assert r["total"]["presente"] == 1
-    assert r["total"]["vazia"] == 1
+    assert r["total"]["vazio"] == 1
     assert r["total"]["ausente"] == 1
     assert r["total"]["falhou"] == 744 - 3
     assert r["completo"] is False
@@ -433,7 +433,7 @@ def test_completude_separa_os_quatro_estados(data_root, monkeypatch):
 
 
 def test_mes_so_com_ausencia_e_vazia_conta_como_completo(data_root, monkeypatch):
-    """Fim de semana nunca tem dado. Somar 'vazia' e 'ausente' em 'faltando'
+    """Fim de semana nunca tem dado. Somar 'vazio' e 'ausente' em 'faltando'
     faria a corrida de dois anos nunca convergir."""
     from riser.data.dukascopy import ABSENT_SUFFIX, raw_path
     from riser.data.pipeline import completude
@@ -455,7 +455,7 @@ def test_mes_so_com_ausencia_e_vazia_conta_como_completo(data_root, monkeypatch)
     r = completude("XAUUSD", 2026, 2)
     assert r["total"]["falhou"] == 0
     assert r["completo"] is True
-    assert r["resolvidas"] == r["horas_no_mes"]
+    assert r["arquivos_resolvidos"] == r["arquivos_horarios_no_mes"]
 
 
 # ------------------------------------------------------- laco de convergencia
@@ -643,3 +643,43 @@ def test_trava_sem_pid_e_orfa(data_root):
     t.path.write_text("{}", encoding="utf-8")
     with Trava("XAUUSD", "parse", root=data_root) as nova:
         assert nova.orfa_assumida is not None
+
+
+# ------------------------------------------------------------- vocabulario
+
+
+def test_relatorio_nomeia_a_unidade_sem_ambiguidade():
+    """Num relatorio que tambem fala de tempo de execucao, "faltam 385 horas" se
+    le como duracao. A unidade de particionamento e ARQUIVO HORARIO; "hora" fica
+    reservada para duracao."""
+    from riser.data.pipeline import completude
+
+    r = completude("XAUUSD", 2026, 2)
+    assert r["unidade"] == "arquivo_horario"
+    assert "arquivos_horarios_no_mes" in r
+    assert "arquivos_resolvidos" in r
+    assert "arquivos_faltando_total" in r
+    proibidas = {"horas_no_mes", "resolvidas", "horas_faltando", "horas_faltando_total"}
+    assert not (proibidas & set(r)), "chave com vocabulario ambiguo voltou"
+    assert set(r["total"]) == {"presente", "vazio", "ausente", "falhou"}
+
+
+def test_formatar_duracao_cobre_as_escalas_da_corrida():
+    from riser.data.dukascopy import formatar_duracao as f
+
+    assert f(45) == "45s"
+    assert f(0) == "0s"
+    assert f(26 * 60) == "26min"
+    assert f(2 * 3600 + 10 * 60) == "2h10"
+    assert f(3 * 86400 + 4 * 3600) == "3d04h"
+    assert f(-5) == "0s", "duracao negativa nao existe"
+
+
+def test_estimativa_usa_o_intervalo_configurado():
+    """385 arquivos x 4s = 1540s ~ 26min. E o exemplo que motivou a estimativa."""
+    from riser.data.dukascopy import estimativa_restante
+
+    assert estimativa_restante(385, 4.0) == "26min"
+    assert estimativa_restante(0, 4.0) == "0s"
+    # Dois anos de arquivos horarios, no piso do intervalo configurado.
+    assert estimativa_restante(17544, 4.0) == "19h30"

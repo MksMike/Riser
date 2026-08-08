@@ -5,7 +5,8 @@
     python -m riser.data.pipeline aggregate --instrumento XAUUSD --de 2026-07 --ate 2026-07
     python -m riser.data.pipeline validate  --instrumento XAUUSD --de 2026-07 --ate 2026-07
 
-Script descartavel serve para 744 horas. Nao serve para 17 mil: uma corrida de
+Script descartavel serve para 744 arquivos horarios. Nao serve para 17 mil:
+uma corrida de
 dois anos atravessa reinicio de PC, queda de rede e possivelmente troca de
 maquina, e nada disso pode custar o que ja foi baixado.
 
@@ -39,8 +40,8 @@ anda. Ele nunca e consultado para decidir o que fazer.
 
 ------------------------------------------------------------------ interrupcao
 
-Ctrl+C marca uma bandeira e a etapa termina a unidade em curso — uma hora, no
-download; um mes, nas demais. Segundo Ctrl+C sai na hora.
+Ctrl+C marca uma bandeira e a etapa termina a unidade em curso — um arquivo
+horario, no download; um mes, nas demais. Segundo Ctrl+C sai imediatamente.
 
 A gravacao ja e atomica em todas as etapas (`write_atomic`, `write_month`,
 `write_bars` escrevem em temporario e renomeiam), entao um corte no meio deixa o
@@ -70,7 +71,9 @@ from riser.data.dukascopy import (
     ABSENT_SUFFIX,
     CONFIG_PATH,
     FEED,
+    FeedConfig,
     download_month,
+    estimativa_restante,
     make_logger,
     raw_path,
 )
@@ -138,7 +141,7 @@ class Interrupcao:
             self.pedida = True
             print(
                 "\nCtrl+C recebido. Terminando a unidade em curso e parando. "
-                "Ctrl+C de novo para sair na hora.",
+                "Ctrl+C de novo para sair imediatamente.",
                 flush=True,
             )
 
@@ -438,18 +441,22 @@ def gravar_relatorio(
 
 
 def completude(instrumento: str, ano: int, mes: int, *, root: Path | None = None) -> dict:
-    """Hora a hora do mes, classificada em QUATRO estados. So um pede acao.
+    """Arquivo horario a arquivo horario, em QUATRO estados. So um pede acao.
 
         presente   .bi5 com conteudo
-        vazia      .bi5 de zero byte: o servidor respondeu 200 sem tick nenhum.
-                   E dado, nao falta — hora de mercado aberto sem negocio.
+        vazio      .bi5 de zero byte: o servidor respondeu 200 sem tick nenhum.
+                   E dado, nao falta — mercado aberto sem negocio, ou fechado.
         ausente    marcador .absent: o servidor devolveu 404. Nunca vai chegar.
-        falhou     nem arquivo nem marcador: as tentativas se esgotaram, ou a
-                   hora nunca foi tentada. E a UNICA que pede nova passada.
+        falhou     nem arquivo nem marcador: as tentativas se esgotaram, ou o
+                   arquivo nunca foi pedido. E o UNICO que pede nova passada.
 
-    Somar 'vazia' e 'ausente' em "faltando" produziria um mes eternamente
+    Somar 'vazio' e 'ausente' em "faltando" produziria um mes eternamente
     incompleto — fim de semana e feriado nunca teriam dado — e a corrida de dois
     anos nunca convergiria.
+
+    VOCABULARIO: a unidade aqui e o ARQUIVO HORARIO, nao "hora". Num relatorio
+    que tambem fala de tempo de execucao, "faltam 385 horas" se le como duracao
+    e o erro passa despercebido. "hora" fica reservada para duracao.
     """
     inicio = datetime(ano, mes, 1, tzinfo=timezone.utc)
     fim = (
@@ -459,41 +466,42 @@ def completude(instrumento: str, ano: int, mes: int, *, root: Path | None = None
     )
 
     por_dia: dict[str, dict[str, int]] = {}
-    total = {"presente": 0, "vazia": 0, "ausente": 0, "falhou": 0}
+    total = {"presente": 0, "vazio": 0, "ausente": 0, "falhou": 0}
     faltando: list[str] = []
 
-    hora = inicio
-    while hora < fim:
-        p = raw_path(instrumento, hora, root)
+    marca = inicio
+    while marca < fim:
+        p = raw_path(instrumento, marca, root)
         marcador = p.with_name(p.name + ABSENT_SUFFIX)
         if p.exists():
-            estado = "presente" if p.stat().st_size > 0 else "vazia"
+            estado = "presente" if p.stat().st_size > 0 else "vazio"
         elif marcador.exists():
             estado = "ausente"
         else:
             estado = "falhou"
-            faltando.append(hora.isoformat())
+            faltando.append(marca.isoformat())
 
-        dia = f"{hora:%Y-%m-%d}"
-        por_dia.setdefault(dia, {"presente": 0, "vazia": 0, "ausente": 0, "falhou": 0})
+        dia = f"{marca:%Y-%m-%d}"
+        por_dia.setdefault(dia, {"presente": 0, "vazio": 0, "ausente": 0, "falhou": 0})
         por_dia[dia][estado] += 1
         total[estado] += 1
-        hora += timedelta(hours=1)
+        marca += timedelta(hours=1)
 
-    horas = sum(total.values())
+    arquivos = sum(total.values())
     return {
         "instrumento": instrumento,
         "ano": ano,
         "mes": mes,
-        "horas_no_mes": horas,
+        "unidade": "arquivo_horario",
+        "arquivos_horarios_no_mes": arquivos,
         "total": total,
         # Resolvido = tudo que nao pede acao. E este o numero que decide se o
-        # mes serve, nao "presente / horas".
-        "resolvidas": horas - total["falhou"],
+        # mes serve, nao "presente / total".
+        "arquivos_resolvidos": arquivos - total["falhou"],
         "completo": total["falhou"] == 0,
         "por_dia": por_dia,
-        "horas_faltando": faltando[:200],
-        "horas_faltando_total": len(faltando),
+        "arquivos_faltando": faltando[:200],
+        "arquivos_faltando_total": len(faltando),
     }
 
 
@@ -507,7 +515,8 @@ def etapa_completude(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, 
         log, sufixo="completude",
     )
     log.info(event="completude", instrumento=instrumento, ano=ano, mes=mes,
-             completo=r["completo"], falhou=r["total"]["falhou"], arquivo=str(dest))
+             completo=r["completo"], arquivos_falhando=r["total"]["falhou"],
+             arquivo=str(dest))
     return {"estado": "medido", "completo": r["completo"],
             "total": r["total"], "relatorio": str(dest)}
 
@@ -515,9 +524,10 @@ def etapa_completude(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, 
 def etapa_download(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool) -> dict:
     """Baixa o mes ate CONVERGIR, nao uma vez.
 
-    Uma passada pode nao fechar um mes: hora que esgota as tentativas por rede
-    nao deixa arquivo nem marcador, e fica como buraco silencioso. "Rodar de novo
-    ate parar de mudar" nao pode ser procedimento manual quando sao dois anos.
+    Uma passada pode nao fechar um mes: arquivo horario que esgota as tentativas
+    por rede nao deixa .bi5 nem marcador, e fica como buraco silencioso. "Rodar
+    de novo ate parar de mudar" nao pode ser procedimento manual quando sao dois
+    anos.
 
     QUANTOS buracos esperar ainda nao se sabe. A primeira estimativa saiu de uma
     corrida contaminada — dois downloaders concorrentes sobre o mesmo diretorio,
@@ -528,8 +538,8 @@ def etapa_download(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, fo
 
     Tres desfechos de parada, e a diferenca entre eles importa:
 
-        convergiu   nenhuma hora falhou por rede. O mes esta resolvido — o que
-                    sobra e ausencia que o servidor confirmou, e essa nao muda.
+        convergiu   nenhum arquivo horario falhou por rede. O mes esta resolvido
+                    — o que sobra e ausencia confirmada, e essa nao muda.
         estagnou    a passada nao resolveu NADA e ainda ha falha. Insistir so
                     repete o mesmo erro; o problema esta na rede ou no servidor,
                     nao na quantidade de tentativas.
@@ -539,9 +549,14 @@ def etapa_download(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, fo
     historico: list[dict] = []
     motivo = "teto"
 
+    intervalo = FeedConfig.load().min_interval_s
     for passada in range(1, MAX_PASSADAS + 1):
         antes = completude(instrumento, ano, mes)["total"]["falhou"]
-        print(f"    passada {passada}/{MAX_PASSADAS}  horas pendentes: {antes}", flush=True)
+        print(
+            f"    passada {passada}/{MAX_PASSADAS}  faltam {antes} arquivo(s) "
+            f"horario(s), ~{estimativa_restante(antes, intervalo)} no piso",
+            flush=True,
+        )
         if antes == 0 and passada > 1:
             motivo = "convergiu"
             break
@@ -749,7 +764,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--ate", required=True, metavar="AAAA-MM")
     p.add_argument("--force", action="store_true",
                    help="refaz mes cujo artefato ja existe (nao vale para download, "
-                        "que sempre pula hora ja baixada)")
+                        "que sempre pula arquivo horario ja baixado)")
     args = p.parse_args(argv)
 
     meses = meses_no_intervalo(args.de, args.ate)
