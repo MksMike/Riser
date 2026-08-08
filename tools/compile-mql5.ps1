@@ -66,6 +66,10 @@
   varredura das pastas de programas. Nunca ha caminho fixo no codigo: a
   instalacao e o hash do terminal sao especificos de cada PC.
 
+  Se a varredura achar MAIS DE UM, o script PARA e pede que se fixe qual
+  (CLAUDE.md, Higiene de ferramenta). Nao escolhe. Builds diferentes do
+  MetaEditor nao sao a mesma ferramenta.
+
 .PARAMETER AllowWarnings
   Aviso deixa de reprovar. Padrao: aviso reprova. Aviso de MQL5 costuma ser
   perda de dado em conversao ou declaracao que esconde outra - as duas coisas
@@ -162,14 +166,26 @@ function Find-MetaEditor {
         throw ("MetaEditor64.exe nao encontrado. Informe -MetaEditor, ou defina " +
                "RISER_METAEDITOR, ou a chave 'metaeditor' em config/terminals.json.")
     }
-    if ($achados.Count -gt 1 -and -not $script:Quiet) {
-        # Escolher em silencio entre duas instalacoes esconderia qual compilador
-        # produziu o .ex5 - e builds diferentes do MetaEditor nao sao a mesma
-        # ferramenta (invariante 9).
-        Write-Host 'Mais de um MetaEditor instalado:' -ForegroundColor Yellow
-        foreach ($a in $achados) { Write-Host "   $a" -ForegroundColor DarkGray }
-        Write-Host "   usando o primeiro. Fixe com -MetaEditor ou config/terminals.json." -ForegroundColor Yellow
-        Write-Host ''
+
+    # Ferramenta de build nao escolhe entre alternativas ambiguas: para e pede
+    # (CLAUDE.md, Higiene de ferramenta). Builds diferentes do MetaEditor nao
+    # sao a mesma ferramenta, e um .ex5 gerado por build mais novo pode nao
+    # carregar num terminal mais antigo. Escolher o primeiro faria este PC e o
+    # outro compilarem com compiladores diferentes, em silencio, contra o
+    # invariante 9 - e a divergencia apareceria num binario que nao carrega,
+    # longe da causa.
+    if ($achados.Count -gt 1) {
+        $lista = ($achados | ForEach-Object { "     $_" }) -join "`n"
+        throw (
+            "mais de um MetaEditor instalado, e este script nao escolhe por voce:`n" +
+            $lista + "`n`n" +
+            "   Fixe um, e prefira o de build MAIS ANTIGO entre os terminais em uso:`n" +
+            "   um .ex5 gerado por build mais novo pode nao carregar num terminal`n" +
+            "   mais antigo; o contrario sempre carrega.`n`n" +
+            "   Em config/terminals.json (local, fora do Git):`n" +
+            '     "metaeditor": "C:\\...\\MetaEditor64.exe"' + "`n" +
+            "   Ou por variavel de ambiente RISER_METAEDITOR, ou por -MetaEditor."
+        )
     }
     return $achados[0]
 }
@@ -484,7 +500,19 @@ if (-not (Test-Path (Join-Path $Repo 'CLAUDE.md'))) {
     throw "'$Repo' nao parece a raiz do RISER (CLAUDE.md nao encontrado)."
 }
 
-$exe = Find-MetaEditor -Explicito $MetaEditor -RepoRoot $Repo
+# Problema de CONFIGURACAO nao merece stack trace. O rastro do PowerShell
+# empurra a linha acionavel para cima da tela e faz uma mensagem clara parecer
+# um defeito do script - e uma ferramenta que parece quebrada deixa de ser
+# usada. Erro interno continua levantando normalmente, com rastro.
+try {
+    $exe = Find-MetaEditor -Explicito $MetaEditor -RepoRoot $Repo
+}
+catch {
+    Write-Host ''
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host ''
+    exit 1
+}
 
 if ($SelfTest) { exit (Invoke-SelfTest -Exe $exe -RepoRoot $Repo) }
 

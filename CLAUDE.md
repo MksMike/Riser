@@ -236,6 +236,39 @@ python\.venv\Scripts\python.exe -m pytest    # ao menos um teste, e passa
 - `git status` não mostra nenhum arquivo de dado.
 - Sensor novo tem documento em `docs/sensors/`.
 
+---
+
+## Higiene de ferramenta
+
+### Arquivo novo entra no Git no momento em que existe
+
+Mesmo incompleto. Mesmo feio. Commit com `wip:` é sempre mais barato que arquivo
+perdido. **Nada de trabalho untracked atravessando uma sessão.**
+
+A regra não é teórica: um fonte MQL5 já existiu por horas apenas no disco, foi
+apagado por um comando de terceiro durante uma sondagem, e o Git não tinha o que
+restaurar. `git status` mostrando `??` é uma janela de perda aberta, não um
+estado neutro.
+
+Corolário — trabalho não versionado muda o que é seguro fazer. Agente que roda
+experimento destrutivo vai para **worktree isolado**, nunca para o repositório
+de trabalho. Se a tarefa envolve apagar, mover ou reescrever em massa, o
+isolamento vem antes da tarefa, não depois do primeiro susto.
+
+### Ferramenta de build nunca escolhe entre alternativas ambíguas
+
+Para e pede. Duas instalações de compilador, dois terminais candidatos, dois
+arquivos de configuração — a ferramenta enumera o que achou e recusa continuar.
+
+O motivo é o invariante 9: dois PCs precisam produzir resultado idêntico. Uma
+escolha automática é determinística no código e arbitrária na prática, porque
+depende do que está instalado em cada máquina. O PC-Escritório escolheria um
+compilador diferente do PC-Casa, em silêncio, e a divergência apareceria num
+binário que não carrega — longe da causa.
+
+Falha explícita custa trinta segundos, uma vez, para fixar a escolha em
+configuração local. Escolha silenciosa custa uma investigação.
+
 ### O compilador do MetaEditor mente, e por isso não se chama ele direto
 
 Medido nesta máquina, não deduzido da documentação. O código de saída **não é
