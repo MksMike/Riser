@@ -57,7 +57,7 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -65,7 +65,14 @@ import pandas as pd
 from riser.core.log import JsonlLogger
 from riser.core.paths import data_root
 from riser.data.bars import TIMEFRAMES, aggregate_month, bars_path, write_bars
-from riser.data.dukascopy import CONFIG_PATH, FEED, download_month, make_logger
+from riser.data.dukascopy import (
+    ABSENT_SUFFIX,
+    CONFIG_PATH,
+    FEED,
+    download_month,
+    make_logger,
+    raw_path,
+)
 from riser.data.ticks import (
     InstrumentSpec,
     ingest_month,
@@ -74,7 +81,11 @@ from riser.data.ticks import (
     summarize,
 )
 
-ETAPAS = ("download", "parse", "aggregate", "validate")
+ETAPAS = ("download", "completude", "parse", "aggregate", "validate")
+
+# Teto de passadas do laco de convergencia do download. Existe para que o laco
+# nao vire uma forma elegante de nunca terminar quando a rede esta ruim.
+MAX_PASSADAS = 4
 
 # Limiares de lacuna, em segundos. Escolhidos pelo que cada um significa, nao
 # por serem redondos: 5 min separa o silencio de sessao asiatica do resto; 1h
@@ -144,6 +155,66 @@ class Interrupcao:
 
 
 # ---------------------------------------------------------------- progresso
+
+
+class TravaOcupada(RuntimeError):
+    """Ja ha uma corrida sobre este instrumento e etapa."""
+
+
+class Trava:
+    """Uma corrida por instrumento e etapa. Duas ao mesmo tempo se sabotam.
+
+    Nao e precaucao teorica. Duas corridas coexistiram neste projeto por horas:
+    uma de uma sessao anterior e outra nova, sobre o mesmo diretorio. O efeito
+    imediato foi um contador que parecia errado — a segunda via como "ja tinha"
+    o que a primeira acabara de escrever — e o efeito caro foi outro: o proprio
+    `config/feeds/dukascopy.yaml` registra que o limite da Dukascopy e por
+    CONEXAO CONCORRENTE, e que quatro conexoes derrubaram a taxa de sucesso para
+    um oitavo. Duas corridas nao dobram a velocidade: fazem as duas falharem
+    mais e o servidor punir as duas.
+
+    Trava ocupada NAO e resolvida por heuristica de idade. O processo pode estar
+    vivo e so lento, e matar uma corrida de dois anos por um palpite de timeout
+    seria pior que o problema. Para e pede, com o PID na mao — a mesma regra do
+    compilador ambiguo (CLAUDE.md, Higiene de ferramenta).
+    """
+
+    def __init__(self, instrumento: str, etapa: str, *, root: Path | None = None) -> None:
+        base = (root or data_root()) / "state" / instrumento
+        base.mkdir(parents=True, exist_ok=True)
+        self.path = base / f"{etapa}.lock"
+        self.etapa = etapa
+
+    def __enter__(self) -> "Trava":
+        conteudo = json.dumps({
+            "pid": os.getpid(),
+            "etapa": self.etapa,
+            "inicio_utc": datetime.now(timezone.utc).isoformat(),
+        })
+        try:
+            # 'x' e atomico no nivel do sistema de arquivos: quem cria, ganha.
+            with open(self.path, "x", encoding="utf-8") as fh:
+                fh.write(conteudo)
+        except FileExistsError:
+            try:
+                dono = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                dono = {}
+            raise TravaOcupada(
+                f"ja ha uma corrida de '{self.etapa}' neste instrumento.\n"
+                f"   dono: pid {dono.get('pid', '?')}, desde {dono.get('inicio_utc', '?')}\n"
+                f"   trava: {self.path}\n\n"
+                "   Duas corridas sobre o mesmo diretorio se sabotam: a Dukascopy\n"
+                "   limita por conexao concorrente, e as duas passam a falhar mais.\n"
+                "   Se a outra corrida ja morreu, apague a trava a mao."
+            ) from None
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
 
 
 class Progresso:
@@ -243,7 +314,7 @@ def analisar_lacunas(df: pd.DataFrame, *, top: int = 10) -> dict:
 
 def gravar_relatorio(
     instrumento: str, ano: int, mes: int, payload: dict, log: JsonlLogger,
-    *, root: Path | None = None,
+    *, root: Path | None = None, sufixo: str = "parse",
 ) -> Path:
     """Relatorio em arquivo proprio, com o envelope completo de log.
 
@@ -254,7 +325,7 @@ def gravar_relatorio(
     """
     base = (root or data_root()) / "reports" / instrumento
     base.mkdir(parents=True, exist_ok=True)
-    dest = base / f"{ano:04d}-{mes:02d}-parse.json"
+    dest = base / f"{ano:04d}-{mes:02d}-{sufixo}.json"
 
     doc = log.envelope("info")
     doc.update(payload)
@@ -268,9 +339,133 @@ def gravar_relatorio(
 # ------------------------------------------------------------------- etapas
 
 
+def completude(instrumento: str, ano: int, mes: int, *, root: Path | None = None) -> dict:
+    """Hora a hora do mes, classificada em QUATRO estados. So um pede acao.
+
+        presente   .bi5 com conteudo
+        vazia      .bi5 de zero byte: o servidor respondeu 200 sem tick nenhum.
+                   E dado, nao falta — hora de mercado aberto sem negocio.
+        ausente    marcador .absent: o servidor devolveu 404. Nunca vai chegar.
+        falhou     nem arquivo nem marcador: as tentativas se esgotaram, ou a
+                   hora nunca foi tentada. E a UNICA que pede nova passada.
+
+    Somar 'vazia' e 'ausente' em "faltando" produziria um mes eternamente
+    incompleto — fim de semana e feriado nunca teriam dado — e a corrida de dois
+    anos nunca convergiria.
+    """
+    inicio = datetime(ano, mes, 1, tzinfo=timezone.utc)
+    fim = (
+        datetime(ano + 1, 1, 1, tzinfo=timezone.utc)
+        if mes == 12
+        else datetime(ano, mes + 1, 1, tzinfo=timezone.utc)
+    )
+
+    por_dia: dict[str, dict[str, int]] = {}
+    total = {"presente": 0, "vazia": 0, "ausente": 0, "falhou": 0}
+    faltando: list[str] = []
+
+    hora = inicio
+    while hora < fim:
+        p = raw_path(instrumento, hora, root)
+        marcador = p.with_name(p.name + ABSENT_SUFFIX)
+        if p.exists():
+            estado = "presente" if p.stat().st_size > 0 else "vazia"
+        elif marcador.exists():
+            estado = "ausente"
+        else:
+            estado = "falhou"
+            faltando.append(hora.isoformat())
+
+        dia = f"{hora:%Y-%m-%d}"
+        por_dia.setdefault(dia, {"presente": 0, "vazia": 0, "ausente": 0, "falhou": 0})
+        por_dia[dia][estado] += 1
+        total[estado] += 1
+        hora += timedelta(hours=1)
+
+    horas = sum(total.values())
+    return {
+        "instrumento": instrumento,
+        "ano": ano,
+        "mes": mes,
+        "horas_no_mes": horas,
+        "total": total,
+        # Resolvido = tudo que nao pede acao. E este o numero que decide se o
+        # mes serve, nao "presente / horas".
+        "resolvidas": horas - total["falhou"],
+        "completo": total["falhou"] == 0,
+        "por_dia": por_dia,
+        "horas_faltando": faltando[:200],
+        "horas_faltando_total": len(faltando),
+    }
+
+
+def etapa_completude(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool) -> dict:
+    """Grava o relatorio de completude. Sem isto, 'quais meses estao
+    incompletos' exigiria reprocessar dois anos para descobrir."""
+    r = completude(instrumento, ano, mes)
+    dest = gravar_relatorio(
+        instrumento, ano, mes,
+        {"event": "completude", "feed": FEED, **r},
+        log, sufixo="completude",
+    )
+    log.info(event="completude", instrumento=instrumento, ano=ano, mes=mes,
+             completo=r["completo"], falhou=r["total"]["falhou"], arquivo=str(dest))
+    return {"estado": "medido", "completo": r["completo"],
+            "total": r["total"], "relatorio": str(dest)}
+
+
 def etapa_download(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool) -> dict:
-    """Baixa o mes. A retomada e interna: hora ja no disco volta como skip."""
-    return download_month(instrumento, ano, mes, logger=log, progress=True)
+    """Baixa o mes ate CONVERGIR, nao uma vez.
+
+    Uma passada nunca fecha um mes: hora que esgota as tentativas por rede nao
+    deixa arquivo nem marcador, e fica como buraco silencioso. Em dezessete mil
+    horas isso vira centenas de buracos, e "rodar de novo ate parar de mudar"
+    nao pode ser procedimento manual.
+
+    Tres desfechos de parada, e a diferenca entre eles importa:
+
+        convergiu   nenhuma hora falhou por rede. O mes esta resolvido — o que
+                    sobra e ausencia que o servidor confirmou, e essa nao muda.
+        estagnou    a passada nao resolveu NADA e ainda ha falha. Insistir so
+                    repete o mesmo erro; o problema esta na rede ou no servidor,
+                    nao na quantidade de tentativas.
+        teto        acabaram as passadas. Reportado como incompleto, de
+                    proposito: um laco sem teto e um jeito de nunca terminar.
+    """
+    historico: list[dict] = []
+    motivo = "teto"
+
+    for passada in range(1, MAX_PASSADAS + 1):
+        antes = completude(instrumento, ano, mes)["total"]["falhou"]
+        print(f"    passada {passada}/{MAX_PASSADAS}  horas pendentes: {antes}", flush=True)
+        if antes == 0 and passada > 1:
+            motivo = "convergiu"
+            break
+
+        t = download_month(instrumento, ano, mes, logger=log, progress=True)
+        depois = completude(instrumento, ano, mes)["total"]["falhou"]
+        resolvidas = antes - depois
+        historico.append({"passada": passada, "tally": t,
+                          "pendentes_antes": antes, "pendentes_depois": depois})
+        log.info(event="download_passada", instrumento=instrumento, ano=ano, mes=mes,
+                 passada=passada, resolvidas=resolvidas, pendentes=depois, **t)
+
+        if depois == 0:
+            motivo = "convergiu"
+            break
+        if resolvidas == 0:
+            motivo = "estagnou"
+            break
+
+    r = completude(instrumento, ano, mes)
+    dest = gravar_relatorio(
+        instrumento, ano, mes,
+        {"event": "completude", "feed": FEED, "motivo_parada": motivo,
+         "passadas": historico, **r},
+        log, sufixo="completude",
+    )
+    return {"estado": motivo, "completo": r["completo"], "total": r["total"],
+            "passadas": len(historico), "relatorio": str(dest)}
 
 
 def etapa_parse(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool) -> dict:
@@ -374,6 +569,7 @@ def etapa_validate(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, fo
 
 ETAPA_FN = {
     "download": etapa_download,
+    "completude": etapa_completude,
     "parse": etapa_parse,
     "aggregate": etapa_aggregate,
     "validate": etapa_validate,
@@ -401,7 +597,7 @@ def rodar(
              meses=len(meses), de=f"{meses[0][0]:04d}-{meses[0][1]:02d}",
              ate=f"{meses[-1][0]:04d}-{meses[-1][1]:02d}", force=force)
 
-    with Interrupcao() as sinal:
+    with Trava(instrumento, etapa), Interrupcao() as sinal:
         for n, (ano, mes) in enumerate(meses, 1):
             if sinal.pedida:
                 interrompido = True
@@ -456,7 +652,16 @@ def main(argv: list[str] | None = None) -> int:
     log = make_logger()
     log.boot(comando=" ".join(argv or sys.argv[1:]), config=str(CONFIG_PATH))
 
-    r = rodar(args.etapa, args.instrumento, meses, force=args.force, log=log)
+    try:
+        r = rodar(args.etapa, args.instrumento, meses, force=args.force, log=log)
+    except TravaOcupada as exc:
+        # Problema operacional nao merece rastro de excecao: a linha acionavel
+        # tem de ser a primeira que se le.
+        print(f"\n{exc}\n", file=sys.stderr)
+        log.error("E5006", event="trava_ocupada", etapa=args.etapa,
+                  instrumento=args.instrumento, msg=str(exc))
+        log.close()
+        return 2
     log.close()
 
     if r["erros"]:

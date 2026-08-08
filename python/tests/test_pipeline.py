@@ -23,6 +23,7 @@ from riser.data.pipeline import (
     Progresso,
     analisar_lacunas,
     etapa_aggregate,
+    etapa_download,
     etapa_parse,
     meses_no_intervalo,
     rodar,
@@ -338,3 +339,220 @@ def test_todas_as_etapas_tem_implementacao():
     from riser.data.pipeline import ETAPA_FN
 
     assert set(ETAPA_FN) == set(ETAPAS)
+
+
+# ------------------------------------------------------------------- trava
+
+
+def test_trava_impede_segunda_corrida(data_root):
+    """Duas corridas coexistiram por horas neste projeto e se sabotaram: a
+    Dukascopy limita por conexao concorrente, entao as duas passam a falhar
+    mais. Nao e precaucao teorica."""
+    from riser.data.pipeline import Trava, TravaOcupada
+
+    with Trava("XAUUSD", "download", root=data_root):
+        with pytest.raises(TravaOcupada, match="ja ha uma corrida"):
+            with Trava("XAUUSD", "download", root=data_root):
+                pass
+
+
+def test_trava_diz_quem_e_o_dono(data_root):
+    import os
+
+    from riser.data.pipeline import Trava, TravaOcupada
+
+    with Trava("XAUUSD", "download", root=data_root):
+        with pytest.raises(TravaOcupada, match=str(os.getpid())):
+            with Trava("XAUUSD", "download", root=data_root):
+                pass
+
+
+def test_trava_e_liberada_na_saida(data_root):
+    from riser.data.pipeline import Trava
+
+    with Trava("XAUUSD", "download", root=data_root) as t:
+        assert t.path.exists()
+    assert not t.path.exists()
+
+
+def test_trava_liberada_mesmo_com_excecao(data_root):
+    from riser.data.pipeline import Trava
+
+    t = Trava("XAUUSD", "parse", root=data_root)
+    with pytest.raises(RuntimeError):
+        with t:
+            raise RuntimeError("estourou")
+    assert not t.path.exists(), "trava vazada bloqueia toda corrida futura"
+
+
+def test_etapas_diferentes_nao_se_travam(data_root):
+    from riser.data.pipeline import Trava
+
+    with Trava("XAUUSD", "download", root=data_root):
+        with Trava("XAUUSD", "parse", root=data_root):
+            pass
+
+
+# -------------------------------------------------------------- completude
+
+
+def _hora(ano, mes, dia, h):
+    from datetime import datetime, timezone
+
+    return datetime(ano, mes, dia, h, tzinfo=timezone.utc)
+
+
+def test_completude_separa_os_quatro_estados(data_root, monkeypatch):
+    """presente, vazia, ausente e falhou. So o ultimo pede acao."""
+    from riser.data.dukascopy import ABSENT_SUFFIX, raw_path
+    from riser.data.pipeline import completude
+
+    raiz = data_root / "raw" / "dukascopy"
+    monkeypatch.setattr(
+        "riser.data.pipeline.raw_path",
+        lambda i, h, root=None: raw_path(i, h, raiz),
+    )
+
+    p = raw_path("XAUUSD", _hora(2026, 7, 1, 0), raiz)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b"dado")                                  # presente
+    raw_path("XAUUSD", _hora(2026, 7, 1, 1), raiz).write_bytes(b"")   # vazia
+    m = raw_path("XAUUSD", _hora(2026, 7, 1, 2), raiz)
+    m.with_name(m.name + ABSENT_SUFFIX).write_bytes(b"")    # ausente
+    # a hora 3 fica sem nada -> falhou
+
+    r = completude("XAUUSD", 2026, 7)
+    assert r["total"]["presente"] == 1
+    assert r["total"]["vazia"] == 1
+    assert r["total"]["ausente"] == 1
+    assert r["total"]["falhou"] == 744 - 3
+    assert r["completo"] is False
+    assert r["por_dia"]["2026-07-01"]["presente"] == 1
+
+
+def test_mes_so_com_ausencia_e_vazia_conta_como_completo(data_root, monkeypatch):
+    """Fim de semana nunca tem dado. Somar 'vazia' e 'ausente' em 'faltando'
+    faria a corrida de dois anos nunca convergir."""
+    from riser.data.dukascopy import ABSENT_SUFFIX, raw_path
+    from riser.data.pipeline import completude
+
+    raiz = data_root / "raw" / "dukascopy"
+    monkeypatch.setattr(
+        "riser.data.pipeline.raw_path",
+        lambda i, h, root=None: raw_path(i, h, raiz),
+    )
+    from datetime import datetime, timedelta, timezone
+
+    h = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    while h < datetime(2026, 3, 1, tzinfo=timezone.utc):
+        p = raw_path("XAUUSD", h, raiz)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.with_name(p.name + ABSENT_SUFFIX).write_bytes(b"")
+        h += timedelta(hours=1)
+
+    r = completude("XAUUSD", 2026, 2)
+    assert r["total"]["falhou"] == 0
+    assert r["completo"] is True
+    assert r["resolvidas"] == r["horas_no_mes"]
+
+
+# ------------------------------------------------------- laco de convergencia
+
+
+def _preencher(raiz, ano, mes, quantas, *, desde=0):
+    """Materializa `quantas` horas do mes, a partir da hora `desde`."""
+    from datetime import datetime, timedelta, timezone
+
+    from riser.data.dukascopy import raw_path as rp
+
+    h = datetime(ano, mes, 1, tzinfo=timezone.utc) + timedelta(hours=desde)
+    for _ in range(quantas):
+        p = rp("XAUUSD", h, raiz)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"x")
+        h += timedelta(hours=1)
+
+
+@pytest.fixture()
+def raiz_bruta(data_root, monkeypatch):
+    from riser.data.dukascopy import raw_path as rp
+
+    raiz = data_root / "raw" / "dukascopy"
+    monkeypatch.setattr(
+        "riser.data.pipeline.raw_path", lambda i, h, root=None: rp(i, h, raiz)
+    )
+    return raiz
+
+
+def test_convergiu_quando_nao_sobra_hora_falhando(raiz_bruta, monkeypatch):
+    passadas = []
+
+    def fake(instr, ano, mes, **k):
+        passadas.append(1)
+        _preencher(raiz_bruta, ano, mes, 672)  # fevereiro inteiro
+        return {"ok": 672, "empty": 0, "absent": 0, "ja_tinha": 0,
+                "ja_ausente": 0, "erro": 0}
+
+    monkeypatch.setattr("riser.data.pipeline.download_month", fake)
+    r = etapa_download("XAUUSD", 2026, 2, LogFalso(), force=False)
+
+    assert r["estado"] == "convergiu"
+    assert r["completo"] is True
+    assert len(passadas) == 1, "convergiu na primeira; nao devia haver segunda"
+
+
+def test_estagnou_para_cedo_em_vez_de_insistir(raiz_bruta, monkeypatch):
+    """Passada que nao resolve NADA e ainda tem falha: o problema esta na rede,
+    nao na quantidade de tentativas. Insistir so repete o mesmo erro."""
+    passadas = []
+
+    def fake(instr, ano, mes, **k):
+        passadas.append(1)
+        return {"ok": 0, "empty": 0, "absent": 0, "ja_tinha": 0,
+                "ja_ausente": 0, "erro": 672}
+
+    monkeypatch.setattr("riser.data.pipeline.download_month", fake)
+    r = etapa_download("XAUUSD", 2026, 2, LogFalso(), force=False)
+
+    assert r["estado"] == "estagnou"
+    assert r["completo"] is False
+    assert len(passadas) == 1, "estagnou: nao devia gastar as passadas restantes"
+
+
+def test_teto_encerra_progresso_lento_e_reporta_incompleto(raiz_bruta, monkeypatch):
+    """Laco sem teto e um jeito elegante de nunca terminar."""
+    from riser.data.pipeline import MAX_PASSADAS
+
+    passadas = []
+
+    def fake(instr, ano, mes, **k):
+        # Resolve um punhado por passada: sempre progride, nunca fecha.
+        _preencher(raiz_bruta, ano, mes, 10, desde=len(passadas) * 10)
+        passadas.append(1)
+        return {"ok": 10, "empty": 0, "absent": 0, "ja_tinha": 0,
+                "ja_ausente": 0, "erro": 662}
+
+    monkeypatch.setattr("riser.data.pipeline.download_month", fake)
+    r = etapa_download("XAUUSD", 2026, 2, LogFalso(), force=False)
+
+    assert r["estado"] == "teto"
+    assert r["completo"] is False
+    assert len(passadas) == MAX_PASSADAS
+
+
+def test_download_grava_relatorio_de_completude(raiz_bruta, monkeypatch):
+    """Nos 2 anos, 'quais meses estao incompletos' nao pode exigir reprocessar."""
+    monkeypatch.setattr(
+        "riser.data.pipeline.download_month",
+        lambda instr, ano, mes, **k: (
+            _preencher(raiz_bruta, ano, mes, 672),
+            {"ok": 672, "empty": 0, "absent": 0, "ja_tinha": 0, "ja_ausente": 0, "erro": 0},
+        )[1],
+    )
+    r = etapa_download("XAUUSD", 2026, 2, LogFalso(), force=False)
+
+    doc = json.loads(Path(r["relatorio"]).read_text(encoding="utf-8"))
+    assert doc["run_id"] and doc["build_hash"], "relatorio sem envelope"
+    assert doc["motivo_parada"] == "convergiu"
+    assert doc["total"]["presente"] == 672
+    assert doc["por_dia"]["2026-02-01"]["presente"] == 24

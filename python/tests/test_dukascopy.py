@@ -128,12 +128,16 @@ def test_pula_bruto_existente_sem_tocar_a_rede(cfg, tmp_path, monkeypatch):
         raise AssertionError("retomada nao pode fazer requisicao")
 
     monkeypatch.setattr(dk, "fetch", explode)
-    assert dk.download_hour(cfg, "XAUUSD", hora, _limiter(), root=tmp_path) == "skip"
+    assert dk.download_hour(cfg, "XAUUSD", hora, _limiter(), root=tmp_path) == "ja_tinha"
     assert dest.read_bytes() == b"bruto"
 
 
 def test_pula_marcador_de_ausencia(cfg, tmp_path, monkeypatch):
-    """Sem o marcador, todo fim de semana e repedido em cada retomada."""
+    """Sem o marcador, todo fim de semana e repedido em cada retomada.
+
+    E o desfecho e `ja_ausente`, nao `ja_tinha`: hora que o servidor nega nao e
+    hora baixada, e somar as duas produz um contador de progresso que mente.
+    """
     hora = datetime(2026, 7, 5, 3, tzinfo=timezone.utc)
     dest = dk.raw_path("XAUUSD", hora, root=tmp_path)
     dest.parent.mkdir(parents=True)
@@ -142,7 +146,7 @@ def test_pula_marcador_de_ausencia(cfg, tmp_path, monkeypatch):
     monkeypatch.setattr(
         dk, "fetch", lambda *a, **k: (_ for _ in ()).throw(AssertionError("nao"))
     )
-    assert dk.download_hour(cfg, "XAUUSD", hora, _limiter(), root=tmp_path) == "skip"
+    assert dk.download_hour(cfg, "XAUUSD", hora, _limiter(), root=tmp_path) == "ja_ausente"
 
 
 def test_404_cria_marcador_e_nao_cria_bi5(cfg, tmp_path, monkeypatch):

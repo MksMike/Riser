@@ -275,16 +275,26 @@ def download_hour(
     root: Path | None = None,
     logger: JsonlLogger | None = None,
 ) -> str:
-    """Baixa uma hora. Devolve `skip`, `ok`, `empty` ou `absent`.
+    """Baixa uma hora. Devolve `ja_tinha`, `ja_ausente`, `ok`, `empty` ou `absent`.
 
     Retomavel por construcao: se o bruto ou o marcador de ausencia ja existem,
     nao ha requisicao nenhuma.
+
+    `ja_tinha` e `ja_ausente` foram um `skip` unico ate se descobrir que os dois
+    nao sao a mesma coisa. Um diz "esta hora ja esta no disco"; o outro, "o
+    servidor ja disse que esta hora nunca existiu". Somados, viram um numero que
+    parece medir progresso e nao mede: numa retomada de dois anos, um mes inteiro
+    de fim de semana marcado como ausente ficaria indistinguivel de um mes
+    inteiro de dado baixado. E e justamente esse numero que decide se a corrida
+    terminou, quando conferir dezessete mil horas a mao nao e opcao.
     """
     dest = raw_path(instrument, hour, root)
     marker = dest.with_name(dest.name + ABSENT_SUFFIX)
 
-    if dest.exists() or marker.exists():
-        return "skip"
+    if dest.exists():
+        return "ja_tinha"
+    if marker.exists():
+        return "ja_ausente"
 
     payload = fetch(cfg, hour_url(cfg, instrument, hour), limiter, logger=logger)
 
@@ -327,7 +337,12 @@ def download_range(
 
     horas = list(hours_reverse(start, end))
     total = len(horas)
-    tally = {"ok": 0, "empty": 0, "absent": 0, "skip": 0, "erro": 0}
+    # `erro` e esgotamento de tentativas: falha de REDE. Nao deixa arquivo nem
+    # marcador de proposito — a hora continua pendente e a proxima passada a
+    # tenta de novo. Confundi-la com `absent`, que e o servidor dizendo que a
+    # hora nunca existiu, faria a corrida ou insistir para sempre no que nao
+    # existe, ou desistir para sempre do que so falhou uma vez.
+    tally = {"ok": 0, "empty": 0, "absent": 0, "ja_tinha": 0, "ja_ausente": 0, "erro": 0}
     bytes_novos = 0
 
     if logger:
@@ -357,9 +372,10 @@ def download_range(
         if progress and (n % 25 == 0 or n == total or desfecho == "erro"):
             pct = 100.0 * n / total if total else 100.0
             print(
-                f"[{n:>6}/{total}] {pct:5.1f}%  {hora:%Y-%m-%d %Hh}  {desfecho:<6}"
+                f"[{n:>6}/{total}] {pct:5.1f}%  {hora:%Y-%m-%d %Hh}  {desfecho:<10}"
                 f"  ok={tally['ok']} vazias={tally['empty']} ausentes={tally['absent']}"
-                f" puladas={tally['skip']} erros={tally['erro']}",
+                f" ja_tinha={tally['ja_tinha']} ja_ausente={tally['ja_ausente']}"
+                f" erros={tally['erro']}",
                 flush=True,
             )
 
