@@ -11,6 +11,7 @@ import lzma
 import struct
 from datetime import datetime, timezone
 
+import pandas as pd
 import pytest
 
 from riser.data.ticks import (
@@ -24,6 +25,8 @@ from riser.data.ticks import (
     ingest_month,
     parse_month,
     parquet_path,
+    read_month,
+    read_month_with_overlap,
     summarize,
 )
 from riser.data.dukascopy import raw_path
@@ -289,6 +292,63 @@ def test_parquet_preserva_ask_e_tipos(tmp_path, spec):
     assert lido["bid"].dtype == "float64" and lido["ask"].dtype == "float64"
     assert (lido["ask"] - lido["bid"]).round(6).eq(0.25).all()
     assert str(lido["ts_utc"].dt.tz) == "UTC"
+
+
+def test_overlap_traz_ticks_do_mes_seguinte(tmp_path, spec):
+    """Sem eles a ultima barra do mes nunca fecha (regra 2 do agregador)."""
+    raw, out = tmp_path / "raw", tmp_path / "ticks"
+    _grava_hora(raw, datetime(2026, 7, 31, 23, tzinfo=timezone.utc),
+                make_bi5(ticks_em(3300.0, spec, n=3)))
+    _grava_hora(raw, datetime(2026, 8, 1, 0, tzinfo=timezone.utc),
+                make_bi5(ticks_em(3300.5, spec, n=3)))
+    ingest_month("XAUUSD", 2026, 7, raw_root=raw, out_root=out)
+    ingest_month("XAUUSD", 2026, 8, raw_root=raw, out_root=out)
+
+    so_julho = read_month("XAUUSD", 2026, 7, root=out)
+    assert (so_julho["ts_utc"] < pd.Timestamp("2026-08-01", tz="UTC")).all()
+
+    com = read_month_with_overlap("XAUUSD", 2026, 7, root=out)
+    assert len(com) > len(so_julho)
+    assert (com["ts_utc"] >= pd.Timestamp("2026-08-01", tz="UTC")).any()
+
+
+def test_overlap_sem_mes_seguinte_nao_falha(tmp_path, spec):
+    """Mes mais recente da serie: nao ha o que emprestar, e esta correto."""
+    raw, out = tmp_path / "raw", tmp_path / "ticks"
+    _grava_hora(raw, datetime(2026, 7, 31, 23, tzinfo=timezone.utc),
+                make_bi5(ticks_em(3300.0, spec, n=3)))
+    ingest_month("XAUUSD", 2026, 7, raw_root=raw, out_root=out)
+
+    com = read_month_with_overlap("XAUUSD", 2026, 7, root=out)
+    assert len(com) == 3
+
+
+def test_overlap_atravessa_a_virada_de_ano(tmp_path, spec):
+    raw, out = tmp_path / "raw", tmp_path / "ticks"
+    _grava_hora(raw, datetime(2025, 12, 31, 23, tzinfo=timezone.utc),
+                make_bi5(ticks_em(3300.0, spec, n=2)))
+    _grava_hora(raw, datetime(2026, 1, 1, 0, tzinfo=timezone.utc),
+                make_bi5(ticks_em(3300.5, spec, n=2)))
+    ingest_month("XAUUSD", 2025, 12, raw_root=raw, out_root=out)
+    ingest_month("XAUUSD", 2026, 1, raw_root=raw, out_root=out)
+
+    com = read_month_with_overlap("XAUUSD", 2025, 12, root=out)
+    assert len(com) == 4
+
+
+def test_overlap_cobre_fim_de_semana(tmp_path, spec):
+    """Uma hora de overlap falharia quando a virada cai em fim de semana."""
+    raw, out = tmp_path / "raw", tmp_path / "ticks"
+    _grava_hora(raw, datetime(2026, 7, 31, 23, tzinfo=timezone.utc),
+                make_bi5(ticks_em(3300.0, spec, n=2)))
+    # Primeiro tick do mes seguinte so 50h depois: mercado fechado no meio.
+    _grava_hora(raw, datetime(2026, 8, 3, 1, tzinfo=timezone.utc),
+                make_bi5(ticks_em(3301.0, spec, n=2)))
+    ingest_month("XAUUSD", 2026, 7, raw_root=raw, out_root=out)
+    ingest_month("XAUUSD", 2026, 8, raw_root=raw, out_root=out)
+
+    assert len(read_month_with_overlap("XAUUSD", 2026, 7, root=out, overlap_h=1.0)) == 2
+    assert len(read_month_with_overlap("XAUUSD", 2026, 7, root=out)) == 4
 
 
 def test_instrumento_desconhecido_nao_e_adivinhado():

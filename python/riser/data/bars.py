@@ -187,6 +187,36 @@ def aggregate_all(ticks: pd.DataFrame, **kwargs) -> dict[str, pd.DataFrame]:
     return {tf: aggregate_tf(ticks, tf, **kwargs) for tf in TIMEFRAMES}
 
 
+def aggregate_month(
+    ticks: pd.DataFrame, seconds: int, year: int, month: int, **kwargs
+) -> pd.DataFrame:
+    """Agrega e devolve so as barras cujo ROTULO cai dentro do mes.
+
+    Recebe ticks que ja incluem sobreposicao do mes seguinte — ver
+    `ticks.read_month_with_overlap`. A sobreposicao existe para que a ultima
+    barra do mes tenha um tick que a feche; sem ela a regra 2 a descartaria, e
+    a perda seria de uma barra por virada de mes, sempre no mesmo ponto do
+    calendario.
+
+    O filtro e pelo rotulo, que e o inicio do intervalo (regra 1). Uma barra
+    que comeca dia 31 as 23:55 pertence a este mes mesmo contendo ticks do
+    primeiro minuto do mes seguinte — e e por isso que ela precisava daqueles
+    ticks para fechar.
+    """
+    bars = aggregate(ticks, seconds, **kwargs)
+    if bars.empty:
+        return bars
+
+    ini = pd.Timestamp(year=year, month=month, day=1, tz="UTC")
+    fim = (
+        pd.Timestamp(year=year + 1, month=1, day=1, tz="UTC")
+        if month == 12
+        else pd.Timestamp(year=year, month=month + 1, day=1, tz="UTC")
+    )
+    dentro = (bars["ts_utc"] >= ini) & (bars["ts_utc"] < fim)
+    return bars.loc[dentro].reset_index(drop=True)
+
+
 # ------------------------------------------------------------ armazenamento
 
 

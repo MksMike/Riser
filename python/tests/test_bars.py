@@ -25,6 +25,7 @@ from riser.data.bars import (
     TIMEFRAMES,
     aggregate,
     aggregate_all,
+    aggregate_month,
     aggregate_tf,
     bars_path,
     empty_bars,
@@ -144,6 +145,56 @@ def test_high_nao_pode_ser_lido_antes_de_existir():
 
     com_pico = ticks([(0, 3300.0), (10, 3301.0), (200, 3350.0), (300, 3302.0)])
     assert aggregate(com_pico, 300)["high"].iloc[0] == 3350.0
+
+
+def test_virada_de_mes_nao_perde_a_ultima_barra():
+    """Sem overlap seria uma barra perdida por mes, sempre no mesmo ponto do
+    calendario — vies sazonal, nao ruido."""
+    fim_do_mes = datetime(2026, 7, 31, 23, 40, tzinfo=timezone.utc)
+    instantes = [fim_do_mes + timedelta(minutes=i) for i in range(20)]  # ate 23:59
+    overlap = [datetime(2026, 8, 1, 0, 2, tzinfo=timezone.utc)]
+    px = [3300.0 + i * 0.1 for i in range(len(instantes) + len(overlap))]
+    df = pd.DataFrame(
+        {
+            "ts_utc": pd.to_datetime(pd.Series(instantes + overlap), utc=True),
+            "bid": pd.Series(px, dtype="float64"),
+        }
+    )
+
+    # Sem overlap a barra das 23:55 seria descartada por estar em formacao.
+    sem = aggregate(df.iloc[: len(instantes)], 300)
+    assert datetime(2026, 7, 31, 23, 55, tzinfo=timezone.utc) not in list(sem["ts_utc"])
+
+    com = aggregate_month(df, 300, 2026, 7)
+    assert com["ts_utc"].iloc[-1] == datetime(2026, 7, 31, 23, 55, tzinfo=timezone.utc)
+
+
+def test_aggregate_month_descarta_barras_de_fora():
+    fim_do_mes = datetime(2026, 7, 31, 23, 50, tzinfo=timezone.utc)
+    instantes = [fim_do_mes + timedelta(minutes=i) for i in range(30)]  # entra agosto
+    df = pd.DataFrame(
+        {
+            "ts_utc": pd.to_datetime(pd.Series(instantes), utc=True),
+            "bid": pd.Series([3300.0 + i * 0.1 for i in range(30)], dtype="float64"),
+        }
+    )
+    bars = aggregate_month(df, 300, 2026, 7)
+    assert (bars["ts_utc"] < pd.Timestamp("2026-08-01", tz="UTC")).all()
+    assert bars["ts_utc"].iloc[-1] == datetime(2026, 7, 31, 23, 55, tzinfo=timezone.utc)
+
+
+def test_aggregate_month_atravessa_a_virada_de_ano():
+    base = datetime(2025, 12, 31, 23, 50, tzinfo=timezone.utc)
+    instantes = [base + timedelta(minutes=i) for i in range(30)]
+    df = pd.DataFrame(
+        {
+            "ts_utc": pd.to_datetime(pd.Series(instantes), utc=True),
+            "bid": pd.Series([3300.0] * 30, dtype="float64"),
+        }
+    )
+    bars = aggregate_month(df, 300, 2025, 12)
+    assert bars["ts_utc"].iloc[-1] == datetime(2025, 12, 31, 23, 55, tzinfo=timezone.utc)
+    assert (bars["ts_utc"] < pd.Timestamp("2026-01-01", tz="UTC")).all()
 
 
 def test_ultima_barra_do_lote_fica_sempre_de_fora():

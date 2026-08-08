@@ -288,6 +288,10 @@ Não assuma resposta para nenhuma destas. Pergunte.
 3. BTCUSD opera 24/7 e quebra a normalização por horário do SVC. Assumir
    estrutura de sessão ou generalizar agora?
 4. Backup do `RISER-data`. Dado de tick perdido é insubstituível.
+5. Como distinguir **ausência esperada** de **feed morto**. Durante a pausa
+   diária nenhum tick chega, nenhuma barra fecha e `freshness_ms` cresce sem
+   parar — indistinguível de queda de conexão, e as duas pedem reações opostas:
+   esperar numa, parar tudo na outra. Ver `docs/decisions/0008-*`.
 
 ---
 

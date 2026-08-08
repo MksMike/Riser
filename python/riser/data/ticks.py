@@ -401,6 +401,60 @@ def write_month(
     return dest
 
 
+def read_month(
+    instrument: str, year: int, month: int, *, root: Path | None = None
+) -> pd.DataFrame:
+    """Le o Parquet de um mes. Frame vazio com schema se nao existir."""
+    p = parquet_path(instrument, year, month, root)
+    if not p.exists():
+        return empty_frame()
+    return pd.read_parquet(p)
+
+
+def read_month_with_overlap(
+    instrument: str,
+    year: int,
+    month: int,
+    *,
+    root: Path | None = None,
+    overlap_h: float = 72.0,
+) -> pd.DataFrame:
+    """O mes, mais as primeiras horas do mes seguinte.
+
+    Existe por causa da regra 2 do agregador: a ultima barra de um lote nunca e
+    emitida, porque nenhum tick a fecha. Agregando mes a mes — que e o caminho
+    natural, ja que o Parquet e mensal — isso perderia a ultima barra de cada
+    mes, sempre. Dois anos de M5 perderiam 24 barras, todas na virada de mes:
+    nao e ruido, e um padrao alinhado ao calendario, e qualquer sensor com
+    componente sazonal o transforma em vies.
+
+    Bastam alguns ticks do mes seguinte para que a barra de fronteira feche
+    corretamente; as barras que caem fora do mes sao descartadas depois.
+
+    72 horas por padrao, e nao uma: a virada de mes cai em fim de semana com
+    frequencia, e nesse caso a primeira hora do mes seguinte nao tem tick
+    nenhum. Ler pouco demais reintroduziria o mesmo bug, so que de forma
+    intermitente — o que e pior, porque parece resolvido na maior parte das
+    vezes.
+    """
+    base = read_month(instrument, year, month, root=root)
+
+    nxt_y, nxt_m = (year + 1, 1) if month == 12 else (year, month + 1)
+    p = parquet_path(instrument, nxt_y, nxt_m, root)
+    if not p.exists():
+        # Sem mes seguinte no disco nao ha o que emprestar. A ultima barra fica
+        # de fora, corretamente: nao existe tick que a feche.
+        return base
+
+    limite = pd.Timestamp(
+        datetime(nxt_y, nxt_m, 1, tzinfo=timezone.utc)
+    ) + pd.Timedelta(hours=overlap_h)
+    extra = pd.read_parquet(p, filters=[("ts_utc", "<", limite)])
+    if extra.empty:
+        return base
+    return pd.concat([base, extra], ignore_index=True)
+
+
 def ingest_month(
     instrument: str,
     year: int,
