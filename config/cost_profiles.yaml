@@ -1,0 +1,26 @@
+# Perfis definidos por custo MEDIDO, não por nome de conta.
+# Nome de conta não transfere entre corretoras; número transfere.
+# O coletor mede; o sistema classifica; o usuário confirma.
+
+profiles:
+  A:
+    label: Baixo custo
+    max_cost_usd_per_oz: 0.10
+    setups_enabled: all
+  B:
+    label: Custo médio
+    max_cost_usd_per_oz: 0.20
+    setups_enabled: [medium, large]
+  C:
+    label: Custo alto
+    max_cost_usd_per_oz: null        # tudo acima de B
+    setups_enabled: [large]
+
+# custo_total = spread_medido + comissão + slippage_medido
+# Teórico vem do tick data (existe em demo).
+# Realizado vem da execução (só existe ao vivo).
+# A diferença entre os dois É o slippage — métrica viva, não constante.
+measurement:
+  min_sample_days: 5
+  recompute_interval_days: 7
+  report_by_hour_of_day: true

@@ -1,0 +1,77 @@
+# ============================================================
+# DADOS — nunca versionados. Vivem em C:\dev\RISER-data
+# ============================================================
+# Ancorado na raiz de proposito. Sem a barra inicial, 'data/' casa com
+# QUALQUER diretorio chamado data em qualquer nivel — e engoliria
+# python/riser/data/, que e codigo-fonte da camada de dados.
+/data/
+*.jsonl
+*.jsonl.gz
+*.parquet
+*.duckdb
+*.csv
+*.tsv
+!config/**/*.csv
+
+# ============================================================
+# MQL5 — compilados e artefatos do terminal
+# ============================================================
+*.ex5
+*.ex4
+*.log
+*.dat
+*.hst
+*.fxt
+*.opt
+*.set
+mql5/**/Files/
+# Ancorados na raiz. Sem a barra inicial casariam com qualquer nivel — e
+# 'Logs/' e o caso mais perigoso do arquivo: git tem core.ignorecase=true no
+# Windows, entao ele tambem casa 'logs/' minusculo, engolindo um futuro
+# python/riser/logs/ ou mql5/Include/RISER/Core/Logs/.
+/Tester/
+/Logs/
+
+# ============================================================
+# Config local — específica de cada PC, nunca compartilhada
+# ============================================================
+*.local.json
+*.local.yaml
+*.local.ini
+config/terminals.json
+.env
+.env.*
+!.env.example
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+# Caminhos explicitos, nao globais. 'build/' solto engoliria docs/build/ e
+# qualquer pacote chamado build; o pyproject vive em python/, entao e la que
+# os artefatos aparecem — nao na raiz.
+/build/
+/dist/
+/python/build/
+/python/dist/
+.ipynb_checkpoints/
+
+# ============================================================
+# Editor / SO
+# ============================================================
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+.idea/
+Thumbs.db
+desktop.ini
+Desktop.ini
+*.swp
+*~

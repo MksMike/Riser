@@ -1,0 +1,50 @@
+# Manifesto de corretora. Valores marcados VERIFICAR devem ser lidos do servidor
+# pelo adaptador e comparados com este arquivo na inicialização. Divergência é
+# erro, não aviso.
+
+id: exness-raw-demo
+label: Exness Raw Spread (demo)
+account_type: raw
+is_demo: true
+
+symbol:
+  resolve: ["XAUUSDm", "XAUUSD"]     # primeiro que existir no Market Watch
+  contract_oz: 100
+  digits: 3
+  volume_min: 0.01
+  volume_max: 200
+  volume_step: 0.01
+  stops_level_points: 0              # permite stop colado ao preço
+  chart_price: bid                   # barras são bid; ask = bid + spread
+
+execution:
+  mode: market                       # sem requote, com slippage
+  filling: [FOK, IOC]
+  account_mode: hedging
+
+account:
+  currency: JPY
+  profit_currency: USD
+  margin_per_lot_jpy: 34265          # VERIFICAR — varia com preço e alavancagem
+
+cost:
+  spread_source: tick                # medido, nunca do anunciado
+  commission_per_lot_side_usd: 3.5
+  spread_observed_usd_per_oz: VERIFICAR
+
+swap:
+  buy_points: -523.8
+  sell_points: 0.0
+  triple_day: wednesday              # varia por corretora; alguns usam sexta
+
+server:
+  daily_break: "20:58-22:00"
+  sunday_open: "22:01"
+  timezone_offset: VERIFICAR         # derivar da âncora acima
+
+policy:
+  scalping_allowed: true             # VERIFICAR nos termos da corretora
+
+# Feed de demo: cotações servem para medir spread. NÃO servem para medir
+# slippage nem qualidade de execução. Marcar todo log deste terminal com
+# source: demo.

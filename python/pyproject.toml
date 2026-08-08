@@ -1,0 +1,29 @@
+[project]
+name = "riser"
+version = "0.1.0"
+# Travado em 3.11 e verificado contra o indice, nao assumido:
+#   MetaTrader5 5.0.45  publica wheel cp311, NAO publica cp312.  <- o teto real
+#   numpy 1.26.4 / pyarrow 15.0.2  nao publicam wheel cp313+.
+# Sem o teto, um venv mais novo resolve versoes diferentes em silencio e os
+# dois PCs deixam de produzir o mesmo resultado a partir dos mesmos ticks.
+requires-python = ">=3.11,<3.12"
+# Versoes exatas. Divergencia de agregacao entre PCs tem de vir do codigo,
+# nunca da biblioteca. Ver requirements.lock.txt para o fecho transitivo.
+dependencies = [
+    "pandas==2.2.3",
+    "numpy==1.26.4",
+    "pyarrow==15.0.2",
+    "duckdb==1.1.3",
+    "pyyaml==6.0.2",
+    "MetaTrader5==5.0.45",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4", "ruff==0.8.6", "matplotlib==3.9.4"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

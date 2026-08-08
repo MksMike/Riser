@@ -1,0 +1,17 @@
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{mq5,mqh}]
+end_of_line = crlf
+
+[*.{yaml,yml,json,md}]
+indent_size = 2
+
+[*.ps1]
+end_of_line = crlf

@@ -1,0 +1,19 @@
+{
+  "_comment": "Copie para terminals.json (gitignored). O hash do terminal difere em cada PC — nunca versione este arquivo preenchido.",
+  "pc": "PC-Home",
+  "data_root": "C:\\dev\\RISER-data",
+  "terminals": [
+    {
+      "alias": "exness-standard",
+      "terminal_id": "PREENCHER — rode tools\\setup-junctions.ps1 -List",
+      "broker_manifest": "config/brokers/exness-standard.yaml",
+      "role": "live-collect"
+    },
+    {
+      "alias": "exness-raw-demo",
+      "terminal_id": "PREENCHER",
+      "broker_manifest": "config/brokers/exness-raw-demo.yaml",
+      "role": "demo-collect"
+    }
+  ]
+}

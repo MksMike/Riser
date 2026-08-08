@@ -1,0 +1,24 @@
+* text=auto
+
+# MetaEditor espera CRLF
+*.mq5  text eol=crlf
+*.mqh  text eol=crlf
+*.mqproj text eol=crlf
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+*.py   text eol=lf
+*.sh   text eol=lf
+*.md   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.json text eol=lf
+
+# Binários — não tentar fazer merge
+*.ex5  binary
+*.ex4  binary
+*.png  binary
+*.jpg  binary
+*.parquet binary
+*.duckdb  binary
