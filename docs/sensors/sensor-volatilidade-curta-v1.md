@@ -143,6 +143,49 @@ Total: 32 testes com significado individual, em vez de ~500 combinações cegas.
 
 **Separação de dados:** in-sample para as Etapas A–C, out-of-sample para confirmação, e um bloco de holdout tocado **uma única vez** no fim. Se o holdout reprovar, volta-se ao desenho — não se escolhe outra variante.
 
+#### Pergunta obrigatória: qual é a explicação alternativa?
+
+Antes de aceitar que uma variante funciona, é obrigatório enunciar **pelo menos
+uma explicação alternativa** para o resultado, e dizer **o que a descartaria**.
+Ambas entram no registo da secção 7.
+
+Isto não é critério de aceitação e não tem alvo numérico. É uma pergunta que
+tem de estar respondida no registo para a linha ser considerada completa.
+
+**Por que existe.** Em 2026-08-08 uma corrida de download degradou de forma
+consistente: 503 crescentes, ritmo a cair de 12 s para 33 s por arquivo, taxa de
+retry a subir de 0,7 para 0,86. A explicação corrente — "o servidor limita por
+volume acumulado" — cobria **tudo** o que se observava. Nenhuma medição a
+contradizia, e por isso passou a dimensionar decisões.
+
+Estava errada. A causa era um segundo processo, órfão, a baixar o mesmo
+diretório. A explicação não caiu por análise: caiu quando o processo apareceu
+numa listagem de PIDs, por acaso.
+
+**Esse é exatamente o formato que o sobreajuste toma num sensor.** Explica bem o
+histórico, nada nos dados o contradiz, e está errado. Um sensor que separa
+quintis de amplitude realizada porque leu volatilidade, e um que os separa
+porque leu um artefacto de horário do feed, produzem a mesma tabela de
+resultados — e só a segunda desaba fora da amostra.
+
+Candidatas a alternativa que devem ser consideradas de rotina, porque são as que
+mais imitam sinal:
+
+- **Artefacto do feed** em vez de mercado: filtragem de tick, granularidade de
+  preço, política de spread. Descartada pelo critério 7, que exige o mesmo
+  comportamento em Exness e Dukascopy.
+- **Sazonalidade de horário** sobrevivente à normalização, em vez de
+  volatilidade acima do normal. Descartada mostrando que o resultado se mantém
+  dentro de cada faixa horária, não só no agregado do dia.
+- **Um punhado de eventos** a carregar a estatística — divulgações, aberturas —
+  em vez de comportamento geral. Descartada removendo os N maiores eventos e
+  verificando que o resultado sobrevive.
+- **Sobreajuste de seleção**: 32 variantes testadas produzem uma boa por acaso.
+  Descartada pela regra do planalto e pelo holdout.
+
+O custo de enunciar a alternativa é baixo, e é justamente por isso que quase
+nunca se enuncia.
+
 ### 2.6 Cadência e orçamento de latência
 
 | Componente | Cadência |
@@ -309,6 +352,19 @@ com **todos** os critérios da secção 4 medidos, data e commit do harness.*
 Uma coluna por critério da secção 4, na mesma ordem. A tabela não fixa o número
 de colunas: acrescentar um critério lá acrescenta uma coluna aqui.
 
-| Data | Commit | Variante | Critérios da secção 4 (uma coluna cada) | Notas |
-|---|---|---|---|---|
-| | | | | |
+| Data | Commit | Variante | Critérios da secção 4 (uma coluna cada) | Explicação alternativa considerada, e o que a descartou | Notas |
+|---|---|---|---|---|---|
+| | | | | | |
+
+**A penúltima coluna não é opcional.** Linha com os critérios preenchidos e a
+alternativa em branco é linha incompleta, não linha aprovada — ver a pergunta
+obrigatória na secção 2.5.
+
+O que se escreve ali tem duas partes, e a segunda é a que vale: qual outra causa
+produziria este mesmo resultado, e que observação concreta a eliminou. *"Podia
+ser artefacto do feed"* não basta; *"podia ser artefacto do feed, descartado
+porque o critério 7 deu 0,48 na Dukascopy e 0,46 na Exness"* basta.
+
+Se nenhuma alternativa foi eliminada, escreva isso. Uma variante aceite com a
+alternativa por descartar é uma decisão consciente e reversível; a mesma
+variante com o campo vazio é uma decisão que ninguém se lembra de ter tomado.

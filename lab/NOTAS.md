@@ -217,3 +217,58 @@ casado mede primeiro.
 confie dinheiro. Passar não basta sozinho, porque os critérios prospectivos
 continuam valendo. Um sistema que bate o dono e não tem edge medido bateu um
 humano num período, e isso é uma amostra de tamanho um.
+
+---
+
+## 2026-08-08 — A explicação que cobria tudo, e estava errada
+
+**Status:** vira pergunta obrigatória no registo do SVC. Nada a verificar.
+
+Durante o download de julho, o comportamento degradou de forma consistente:
+
+```
+503 crescentes
+ritmo   12s  ->  33s por arquivo horário
+retry   0,7  ->  0,86 por arquivo
+```
+
+A explicação corrente era *"a Dukascopy limita por volume acumulado, e por isso
+degrada ao longo da corrida"*. Ela cobria **todas** as observações. Nenhuma
+medição a contradizia. Foi usada para recomendar desacelerar a corrida de dois
+anos.
+
+Estava errada. A causa era um segundo processo, órfão de um `TaskStop` que não
+matou o filho, a baixar o mesmo diretório — duas conexões bastam, coisa que o
+próprio `config/feeds/dukascopy.yaml` já documentava e que não foi aplicada ao
+próprio comportamento.
+
+**A explicação não caiu por análise. Caiu quando o processo apareceu numa
+listagem de PIDs, por acaso.**
+
+### Por que isto é sobre sensores, não sobre downloads
+
+É o formato exato que o sobreajuste toma: explica bem o histórico, nada nos
+dados o contradiz, e está errado.
+
+Um sensor que separa quintis de amplitude realizada porque leu volatilidade, e
+um que os separa porque leu um artefacto de horário do feed, produzem a mesma
+tabela de resultados. Ambos passam nos critérios. Só o segundo desaba fora da
+amostra — e quando desabar, o histórico de testes vai parecer ter aprovado
+corretamente, porque aprovou.
+
+A defesa é a mesma nos dois casos, e é barata: **enunciar a causa alternativa e
+dizer o que a descartaria**. Custa minutos. Quase ninguém faz, porque quando a
+explicação corrente ajusta bem não parece haver o que procurar — e é exatamente
+aí que ela é mais perigosa.
+
+Virou pergunta obrigatória na secção 2.5 do SVC e coluna no registo da secção 7:
+*"explicação alternativa considerada, e o que a descartou"*. Não é critério de
+aceitação numérico; é campo que precisa estar respondido para a linha contar
+como completa.
+
+### O corolário operacional
+
+Antes de dimensionar qualquer decisão sobre uma explicação de degradação,
+verifique o que está a correr na máquina. É uma verificação de segundos que
+teria poupado horas — e que não foi feita porque a explicação disponível já
+parecia suficiente.
