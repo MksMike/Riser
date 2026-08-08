@@ -301,8 +301,12 @@ Mostrador único com `value`, cor por `state`, e os componentes em detalhe expan
 
 ## 7. Registo de resultados
 
-*A preencher após a execução do protocolo da secção 2.5. Cada variante testada, com os cinco critérios medidos, data e commit do harness.*
+*A preencher após a execução do protocolo da secção 2.5. Cada variante testada,
+com **todos** os critérios da secção 4 medidos, data e commit do harness.*
 
-| Data | Commit | Variante | Crit. 1 | Crit. 2 | Crit. 3 | Crit. 4 | Crit. 5 | Notas |
-|---|---|---|---|---|---|---|---|---|
-| | | | | | | | | |
+Uma coluna por critério da secção 4, na mesma ordem. A tabela não fixa o número
+de colunas: acrescentar um critério lá acrescenta uma coluna aqui.
+
+| Data | Commit | Variante | Critérios da secção 4 (uma coluna cada) | Notas |
+|---|---|---|---|---|
+| | | | | |

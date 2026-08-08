@@ -102,6 +102,16 @@ if (-not (Test-Path (Join-Path $Path 'CLAUDE.md'))) {
 
 $findings = New-Object System.Collections.ArrayList
 
+# Censo das supressoes de arquivo inteiro. Superficie de escape cresce sozinha:
+# cada isencao e local e defensavel, e o conjunto vira uma regra que nao roda
+# em lugar nenhum sem que ninguem tenha decidido isso.
+$suppressionCensus = @{}
+
+# Acima deste numero de arquivos suprimindo a MESMA regra, o problema deixa de
+# ser dos arquivos e passa a ser da regra. Dois e o limite porque um documento
+# que descreve um antipadrao e a excecao esperada; tres ja e padrao.
+$SuppressionLimit = 2
+
 function Add-Finding {
     param([string] $File, [int] $Line, [string] $RuleId, [string] $Text)
     $rel = $File.Substring($Path.Length).TrimStart('\')
@@ -170,6 +180,10 @@ foreach ($file in $targets) {
     # pertencem. Varrer isso seria acusar o arquivo de fazer o seu trabalho.
     $isBrokerManifest = $file -match '\\config\\brokers\\'
     $fileWide = Get-FileWideSuppressions $lines
+    foreach ($id in $fileWide) {
+        if (-not $suppressionCensus.ContainsKey($id)) { $suppressionCensus[$id] = @() }
+        $suppressionCensus[$id] += $file.Substring($Path.Length).TrimStart('\')
+    }
 
     $inFence = $false
     $fenceLang = ''
@@ -293,9 +307,40 @@ if (Test-Path $gitignore) {
     }
 }
 
+# -------------------------------------------------- censo de supressoes
+
+# Sai mesmo com zero achados: uma regra suprimida em todo lado produz zero
+# achados exatamente como uma regra satisfeita. Sem este bloco, os dois estados
+# sao indistinguiveis - o mesmo modo de falha do invariante 10, num degrau
+# acima.
+$overused = @()
+if ($suppressionCensus.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'Supressoes de arquivo inteiro:' -ForegroundColor Cyan
+    foreach ($id in ($suppressionCensus.Keys | Sort-Object)) {
+        $files = @($suppressionCensus[$id])
+        $over  = $files.Count -gt $SuppressionLimit
+        if ($over) { $overused += $id }
+        $color = if ($over) { 'Yellow' } else { 'DarkGray' }
+        Write-Host ('   {0}  {1} arquivo(s)' -f $id, $files.Count) -ForegroundColor $color
+        foreach ($f in $files) { Write-Host ('      {0}' -f $f) -ForegroundColor DarkGray }
+    }
+    Write-Host ''
+}
+
+foreach ($id in $overused) {
+    Write-Host ('ATENCAO: {0} esta suprimida em {1} arquivos.' -f $id, @($suppressionCensus[$id]).Count) -ForegroundColor Yellow
+    Write-Host '   Acima de dois arquivos, o problema e da REGRA, nao dos arquivos.' -ForegroundColor Yellow
+    Write-Host '   Recalibre a heuristica ou remova a regra. Nao acrescente supressao.' -ForegroundColor Yellow
+    Write-Host ''
+}
+
 # ------------------------------------------------------------------ saida
 
-if ($findings.Count -eq 0) { exit 0 }
+if ($findings.Count -eq 0) {
+    if ($overused.Count -gt 0) { exit 1 }
+    exit 0
+}
 
 Write-Host ''
 foreach ($g in ($findings | Group-Object Rule)) {

@@ -39,9 +39,51 @@ depois  todos os critérios de aceitação do formato SVC (ver docs/sensors/)
 O documento do sensor passa a ser a única fonte de quantos são, e os dois não
 têm como discordar.
 
-Numeração de um documento sobre si mesmo continua legítima: `docs/sensors/` pode
-dizer "critérios 1–4 mantidos em ambos os feeds" porque os critérios vivem ali.
-O que não se faz é afirmar de fora quantos itens outro arquivo tem.
+### A fronteira é a distância, não o arquivo
+
+O limite de arquivo é onde o problema aparece primeiro, não onde ele está. A
+fronteira relevante é entre a **contagem** e **o que ela conta** — e um arquivo
+longo tem fronteiras internas.
+
+O documento do SVC dizia, na secção 7, *"com os cinco critérios medidos"*, com
+colunas `Crit. 1` a `Crit. 5`. A secção 4, trinta linhas acima, tinha oito. A
+contagem e o contado estavam no mesmo arquivo e mesmo assim divergiram, porque
+ninguém que edita a tabela de aceitação rola até a tabela de registo.
+
+Regra editorial: se a contagem não está à vista do que conta, ela vai apodrecer.
+Aponte em vez de contar — *"todos os critérios da secção 4"*.
+
+Isto **não** vira regra do verificador. Uma heurística intra-arquivo teria de
+acusar toda contagem que não estivesse adjacente ao seu referente, e o ruído
+inviabilizaria a ferramenta. Fica como princípio de escrita, verificado por
+quem lê.
+
+### Contagem que descreve × contagem que deriva
+
+Nem todo número é uma afirmação sobre conteúdo. A secção 2.5 do SVC diz:
+
+```
+Variar: W ∈ {10s, 20s, 30s, 60s} × micro ∈ {tr, rg, tr+rg, rg+er, tr+rg+er}
+→ 20 testes.
+```
+
+O `20` não descreve nada: **deriva** da expressão na linha imediatamente
+anterior, e existe para que o leitor confira de cabeça que a conta fecha —
+4 × 5 = 20. O mesmo vale para o "Total: 32 testes", que soma 20 + 3 + 9.
+
+| tipo | exemplo | apodrece? |
+|---|---|---|
+| descreve conteúdo | "critérios 1–8 do formato SVC" | sim — o conteúdo muda sem avisar |
+| deriva de expressão adjacente | "4 × 5 → 20 testes" | não — o erro é visível no lugar |
+
+Uma contagem derivada é verificável onde está. Se a lista de variantes mudar, a
+multiplicação na mesma linha muda junto, e um `20` obsoleto ao lado de um
+`4 × 6` é imediatamente errado para quem lê. Estas ficam.
+
+Numeração de um documento sobre si mesmo também continua legítima:
+`docs/sensors/` pode dizer "critérios 1–4 mantidos em ambos os feeds" porque os
+critérios vivem ali. O que não se faz é afirmar de fora quantos itens outro
+arquivo tem.
 
 Aplicado também a `tools/check-invariants.ps1` e à ADR 0005, que diziam "os
 quatro modos de falha" e "as quatro regras" — contagens sobre um arquivo que a

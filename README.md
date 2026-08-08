@@ -74,6 +74,16 @@ Varre `docs/` e `config/` procurando contradição com os invariantes do
 `CLAUDE.md`. Não é exaustivo de propósito — cobre os modos de falha que já
 aconteceram aqui. `-ShowRules` lista o que ele verifica.
 
+Citação deliberada da forma antiga se suprime com `invariant-ok: <REGRA>` na
+linha ou na anterior; para o documento que descreve um antipadrão inteiro, com
+`invariant-ok-file: <REGRA>` no cabeçalho.
+
+O script relata quantos arquivos suprimem cada regra. **Se mais de dois
+suprimem a mesma, o problema é da regra, não dos arquivos** — recalibre ou
+remova, não acrescente supressão. Nesse caso ele sai com erro mesmo sem achado
+nenhum: uma regra dispensada em todo lado produz o mesmo silêncio de uma regra
+satisfeita, e os dois estados precisam ser distinguíveis.
+
 Checklist do que o script não cobre:
 
 - `git status` não mostra nenhum arquivo de dado
