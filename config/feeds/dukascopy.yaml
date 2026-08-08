@@ -17,12 +17,28 @@ source:
 # Educado de proposito. Este e um servico publico e gratuito; o custo de ser
 # bloqueado e perder acesso ao unico feed de referencia independente que o
 # projeto tem.
+#
+# Os numeros abaixo foram MEDIDOS contra o servidor em 2026-08-08, nao
+# escolhidos. Cinco requisicoes por regime, uma conexao de cada vez:
+#
+#   intervalo 0.5s   3/5 sucesso   ~21s por requisicao
+#   intervalo 2.0s   3/5 sucesso   ~20s por requisicao
+#   intervalo 4.0s   5/5 sucesso    ~9s por requisicao
+#
+# Ser mais educado saiu MAIS RAPIDO. Com intervalo curto o servidor devolve 503
+# e o backoff consome mais tempo do que a pausa teria custado.
+#
+# Concorrencia foi testada e REPROVADA: 4 conexoes simultaneas com taxa global
+# de 0.5 req/s — menos da metade da taxa do regime de 0.5s, que ja funcionava
+# em parte — deram 1/8 de sucesso, com 503 imediato nas ultimas quatro. O
+# limite da Dukascopy e por CONEXAO CONCORRENTE, nao por taxa media. Downloader
+# serial nao e falta de otimizacao: e o unico regime que o servidor aceita.
 politeness:
-  min_interval_s: 0.5
+  min_interval_s: 4.0
   max_retries: 5
-  backoff_base_s: 1.0
-  backoff_max_s: 60.0
-  timeout_s: 30.0
+  backoff_base_s: 2.0
+  backoff_max_s: 120.0
+  timeout_s: 45.0
 
 instruments:
   XAUUSD:

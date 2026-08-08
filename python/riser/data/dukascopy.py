@@ -179,7 +179,7 @@ def last_complete_month(now: datetime) -> tuple[datetime, datetime]:
 # ----------------------------------------------------------------- download
 
 
-class _RateLimiter:
+class RateLimiter:
     """Intervalo minimo entre requisicoes.
 
     Conservador de proposito: este e um servico publico e gratuito, e o custo
@@ -198,12 +198,24 @@ class _RateLimiter:
         self._last = time.monotonic()
 
 
-def _fetch(cfg: FeedConfig, url: str, limiter: _RateLimiter) -> bytes | None:
+def fetch(
+    cfg: FeedConfig,
+    url: str,
+    limiter: RateLimiter,
+    *,
+    logger: JsonlLogger | None = None,
+) -> bytes | None:
     """Busca uma URL. Devolve os bytes, ou None se o servidor disser 404.
 
     404 nao e retentado: significa "esta hora nao existe", nao "tente de novo".
     Retentar 404 cinco vezes com backoff transformaria um fim de semana normal
     em minutos de espera inutil, multiplicados por cada hora do periodo.
+
+    **Todo retry e logado.** Um retry que nao aparece em lugar nenhum torna a
+    unica evidencia de que o servidor esta a recusar pedidos ser a lentidao — e
+    lentidao sem causa visivel e indistinguivel de rede lenta, disco lento ou
+    codigo mal escrito. Foi assim que 503 em serie passou por "download
+    demorado" numa primeira execucao real.
     """
     ultima: Exception | None = None
     for tentativa in range(cfg.max_retries):
@@ -228,12 +240,20 @@ def _fetch(cfg: FeedConfig, url: str, limiter: _RateLimiter) -> bytes | None:
         # de milhares de horas nao sincronize as tentativas num padrao que o
         # servidor leia como abuso.
         espera = min(cfg.backoff_base_s * (2**tentativa), cfg.backoff_max_s)
-        time.sleep(espera * (0.5 + random.random()))
+        espera *= 0.5 + random.random()
+        if logger:
+            logger.warn(
+                event="retry", url=url, tentativa=tentativa + 1,
+                de=cfg.max_retries, espera_s=round(espera, 2),
+                causa=type(ultima).__name__,
+                http=getattr(ultima, "code", None), msg=str(ultima),
+            )
+        time.sleep(espera)
 
     raise DukascopyError(f"{cfg.max_retries} tentativas falharam em {url}: {ultima}")
 
 
-def _write_atomic(dest: Path, payload: bytes) -> None:
+def write_atomic(dest: Path, payload: bytes) -> None:
     """Grava por arquivo temporario e renomeia.
 
     Sem isto, uma interrupcao no meio da escrita deixa um .bi5 truncado — e a
@@ -250,9 +270,10 @@ def download_hour(
     cfg: FeedConfig,
     instrument: str,
     hour: datetime,
-    limiter: _RateLimiter,
+    limiter: RateLimiter,
     *,
     root: Path | None = None,
+    logger: JsonlLogger | None = None,
 ) -> str:
     """Baixa uma hora. Devolve `skip`, `ok`, `empty` ou `absent`.
 
@@ -265,14 +286,14 @@ def download_hour(
     if dest.exists() or marker.exists():
         return "skip"
 
-    payload = _fetch(cfg, hour_url(cfg, instrument, hour), limiter)
+    payload = fetch(cfg, hour_url(cfg, instrument, hour), limiter, logger=logger)
 
     if payload is None:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_bytes(b"")
         return "absent"
 
-    _write_atomic(dest, payload)
+    write_atomic(dest, payload)
     return "empty" if len(payload) == 0 else "ok"
 
 
@@ -293,7 +314,7 @@ def download_range(
     inalcancavel nao deve custar as outras milhares.
     """
     cfg = cfg or FeedConfig.load()
-    limiter = _RateLimiter(cfg.min_interval_s)
+    limiter = RateLimiter(cfg.min_interval_s)
 
     piso = cfg.history_starts.get(instrument)
     if piso is not None and start < piso:
@@ -318,7 +339,9 @@ def download_range(
 
     for n, hora in enumerate(horas, 1):
         try:
-            desfecho = download_hour(cfg, instrument, hora, limiter, root=root)
+            desfecho = download_hour(
+                cfg, instrument, hora, limiter, root=root, logger=logger
+            )
             tally[desfecho] += 1
             if desfecho in ("ok", "empty"):
                 bytes_novos += raw_path(instrument, hora, root).stat().st_size
