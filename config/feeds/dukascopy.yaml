@@ -33,12 +33,56 @@ source:
 # em parte — deram 1/8 de sucesso, com 503 imediato nas ultimas quatro. O
 # limite da Dukascopy e por CONEXAO CONCORRENTE, nao por taxa media. Downloader
 # serial nao e falta de otimizacao: e o unico regime que o servidor aceita.
+#
+# CONFIRMADO EM CAMPO, 2026-08-08, sem querer. Duas corridas de download
+# coexistiram sobre o mesmo diretorio por cerca de duas horas — uma de uma sessao
+# anterior, outra nova — e produziram 503 e timeouts em serie. Nenhuma delas
+# estava sendo agressiva sozinha: eram duas conexoes, e bastou. Por isso existe
+# trava por instrumento e etapa em riser/data/pipeline.py; a taxa de falha
+# medida naquele periodo NAO descreve o regime serial e nao serve para
+# dimensionar corrida nenhuma.
 politeness:
   min_interval_s: 4.0
   max_retries: 5
   backoff_base_s: 2.0
   backoff_max_s: 120.0
   timeout_s: 45.0
+
+# ============================================================
+# HORA SEM DADO VEM COMO 200 VAZIO, QUASE NUNCA COMO 404
+# ============================================================
+# Contado em julho de 2026, mes inteiro, XAUUSD:
+#
+#     presente   230 horas   arquivo com conteudo
+#     vazia      108 horas   HTTP 200 com ZERO byte
+#     ausente      0 horas   HTTP 404
+#
+# Zero. O 404 praticamente nao aparece neste feed. Sabado 2026-07-25 voltou
+# como 24 horas vazias, nao como 24 ausencias — o servidor responde, e a
+# resposta e um arquivo de tamanho zero.
+#
+# POR QUE ISTO IMPORTA MAIS DO QUE PARECE: quem for medir completude precisa
+# tratar `vazia` como DADO, nunca como falta. Fim de semana, feriado e pausa
+# diaria caem todos nessa categoria, e sao uma fatia grande do calendario. Somar
+# `vazia` a `faltando` faz o mes nunca fechar, o laco de convergencia nunca
+# convergir, e uma corrida de dois anos rodar ate o teto de passadas sem motivo.
+#
+# Sao QUATRO estados, e so um pede acao:
+#
+#     presente   .bi5 com conteudo                 nada a fazer
+#     vazia      .bi5 de zero byte                 nada a fazer, e dado
+#     ausente    marcador .absent, veio 404        nada a fazer, nunca vai chegar
+#     falhou     nem arquivo nem marcador          UNICO que pede nova passada
+#
+# `falhou` e esgotamento de tentativas por rede. Nao grava marcador de
+# proposito: a hora continua pendente e a passada seguinte a tenta de novo.
+outcomes:
+  measured_on: "2026-07"
+  instrument_measured: XAUUSD
+  hours_present: 230
+  hours_empty: 108
+  hours_absent_404: 0
+  empty_is_data: true
 
 instruments:
   XAUUSD:

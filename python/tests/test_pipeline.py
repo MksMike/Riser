@@ -11,6 +11,8 @@ Fixtures geradas em codigo, pela ADR 0001.
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -556,3 +558,88 @@ def test_download_grava_relatorio_de_completude(raiz_bruta, monkeypatch):
     assert doc["motivo_parada"] == "convergiu"
     assert doc["total"]["presente"] == 672
     assert doc["por_dia"]["2026-02-01"]["presente"] == 24
+
+
+# ------------------------------------------------------------- trava orfa
+
+
+def test_pid_morto_e_detectado_sem_matar_ninguem():
+    """`os.kill(pid, 0)` e o idioma de POSIX; no Windows a mesma chamada pode
+    TERMINAR o processo. A verificacao aqui nao toca no processo."""
+    import subprocess
+    import sys as _sys
+    import time as _time
+
+    from riser.data.pipeline import _processo_vivo
+
+    cobaia = subprocess.Popen([_sys.executable, "-c", "import time; time.sleep(20)"])
+    _time.sleep(0.8)
+    try:
+        assert _processo_vivo(cobaia.pid) is True
+        assert cobaia.poll() is None, "a verificacao matou a cobaia"
+    finally:
+        cobaia.kill()
+        cobaia.wait()
+    _time.sleep(0.3)
+    assert _processo_vivo(cobaia.pid) is False
+    assert _processo_vivo(999999) is False
+    assert _processo_vivo(os.getpid()) is True
+
+
+def test_trava_de_processo_morto_e_assumida(data_root, capsys):
+    """Corte de energia no meio da corrida de 2 anos nao pode bloquear a
+    retomada. PID morto e fato."""
+    from riser.data.pipeline import Trava
+
+    t = Trava("XAUUSD", "download", root=data_root)
+    t.path.write_text(json.dumps({
+        "pid": 999999, "etapa": "download",
+        "inicio_utc": datetime.now(timezone.utc).isoformat(),
+    }), encoding="utf-8")
+
+    with Trava("XAUUSD", "download", root=data_root) as nova:
+        assert nova.orfa_assumida is not None
+        assert "999999" in nova.orfa_assumida
+        dono = json.loads(nova.path.read_text(encoding="utf-8"))
+        assert dono["pid"] == os.getpid()
+    assert "orfa assumida" in capsys.readouterr().out
+
+
+def test_trava_de_processo_vivo_continua_recusando(data_root):
+    """A sobrevivencia a processo morto nao pode virar porta para corrida dupla."""
+    from riser.data.pipeline import Trava, TravaOcupada
+
+    with Trava("XAUUSD", "download", root=data_root):
+        with pytest.raises(TravaOcupada, match="VIVA"):
+            with Trava("XAUUSD", "download", root=data_root):
+                pass
+
+
+def test_pid_reaproveitado_apos_boot_e_orfao(data_root):
+    """PID vivo pode ser OUTRO processo que herdou o numero depois do reinicio.
+    Um processo nao pode ter comecado antes da maquina ligar - isso e fato, nao
+    heuristica de idade."""
+    from riser.data.pipeline import Trava, _boot_utc
+
+    if _boot_utc() is None:
+        pytest.skip("boot desconhecido nesta plataforma")
+
+    t = Trava("XAUUSD", "download", root=data_root)
+    t.path.write_text(json.dumps({
+        "pid": os.getpid(),                       # vivo, mas...
+        "etapa": "download",
+        "inicio_utc": "2001-01-01T00:00:00+00:00",  # ...de antes de qualquer boot
+    }), encoding="utf-8")
+
+    with Trava("XAUUSD", "download", root=data_root) as nova:
+        assert nova.orfa_assumida is not None
+        assert "boot" in nova.orfa_assumida
+
+
+def test_trava_sem_pid_e_orfa(data_root):
+    from riser.data.pipeline import Trava
+
+    t = Trava("XAUUSD", "parse", root=data_root)
+    t.path.write_text("{}", encoding="utf-8")
+    with Trava("XAUUSD", "parse", root=data_root) as nova:
+        assert nova.orfa_assumida is not None

@@ -52,6 +52,7 @@ retomada nao veria, porque a retomada olha o artefato final.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import signal
@@ -158,7 +159,85 @@ class Interrupcao:
 
 
 class TravaOcupada(RuntimeError):
-    """Ja ha uma corrida sobre este instrumento e etapa."""
+    """Ja ha uma corrida VIVA sobre este instrumento e etapa."""
+
+
+def _processo_vivo(pid: int) -> bool:
+    """O processo existe agora? FATO, nao palpite.
+
+    NAO usa `os.kill(pid, 0)`. Esse e o idioma de POSIX; no Windows, o
+    `os.kill` da CPython abre o processo e chama `TerminateProcess(handle, sig)`
+    para qualquer sinal que nao seja CTRL_C_EVENT ou CTRL_BREAK_EVENT — ou seja,
+    a chamada que deveria apenas perguntar pode MATAR. Num teste controlado aqui
+    a cobaia sobreviveu, o que torna o comportamento ambiguo entre versoes; e
+    ambiguidade e motivo bastante para nao usar a chamada num codigo cuja
+    unica funcao e proteger uma corrida de dois anos.
+
+    `OpenProcess` + `WaitForSingleObject(0)` responde sem tocar no processo.
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        SYNCHRONIZE = 0x00100000
+        WAIT_TIMEOUT = 0x102
+        k = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        h = k.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+        if not h:
+            return False
+        try:
+            return k.WaitForSingleObject(h, 0) == WAIT_TIMEOUT
+        finally:
+            k.CloseHandle(h)
+    try:
+        os.kill(pid, 0)          # em POSIX isto so consulta
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True              # existe, e de outro usuario
+    return True
+
+
+def _boot_utc() -> datetime | None:
+    """Instante em que a maquina ligou, ou None se nao der para saber."""
+    if sys.platform != "win32":
+        return None
+    try:
+        ms = ctypes.windll.kernel32.GetTickCount64()  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return None
+    return datetime.now(timezone.utc) - timedelta(milliseconds=ms)
+
+
+def _trava_orfa(dono: dict) -> str | None:
+    """Motivo pelo qual a trava e orfa, ou None se o dono ainda esta vivo.
+
+    Duas razoes, e as duas sao FATO verificavel — nunca idade do arquivo. PID
+    morto e fato; "esta parado ha muito tempo" e palpite, e um palpite errado
+    mataria uma corrida de dois anos que so estava lenta.
+    """
+    pid = dono.get("pid")
+    if not isinstance(pid, int):
+        return "a trava nao registra PID"
+
+    if not _processo_vivo(pid):
+        return f"o processo {pid} nao existe mais"
+
+    # PID vivo, mas pode ser OUTRO processo que herdou o numero depois de um
+    # reinicio. Um processo nao pode ter comecado antes da maquina ligar.
+    boot = _boot_utc()
+    inicio = dono.get("inicio_utc")
+    if boot is not None and isinstance(inicio, str):
+        try:
+            quando = datetime.fromisoformat(inicio)
+        except ValueError:
+            return None
+        if quando.tzinfo is None:
+            quando = quando.replace(tzinfo=timezone.utc)
+        if quando < boot:
+            return (f"a trava e de antes do ultimo boot ({boot:%Y-%m-%d %H:%M} UTC); "
+                    f"o PID {pid} foi reaproveitado por outro processo")
+    return None
 
 
 class Trava:
@@ -177,6 +256,12 @@ class Trava:
     vivo e so lento, e matar uma corrida de dois anos por um palpite de timeout
     seria pior que o problema. Para e pede, com o PID na mao — a mesma regra do
     compilador ambiguo (CLAUDE.md, Higiene de ferramenta).
+
+    Mas trava ORFA e assumida sozinha, sem perguntar, porque a orfandade se
+    verifica: PID morto e fato. Sem isso, um corte de energia no meio da corrida
+    de dois anos deixaria um arquivo apontando para um processo inexistente, e a
+    retomada recusaria — descoberto as duas da manha, depois do reinicio, que e
+    exatamente quando ninguem quer depurar arquivo de trava.
     """
 
     def __init__(self, instrumento: str, etapa: str, *, root: Path | None = None) -> None:
@@ -184,6 +269,7 @@ class Trava:
         base.mkdir(parents=True, exist_ok=True)
         self.path = base / f"{etapa}.lock"
         self.etapa = etapa
+        self.orfa_assumida: str | None = None
 
     def __enter__(self) -> "Trava":
         conteudo = json.dumps({
@@ -195,19 +281,31 @@ class Trava:
             # 'x' e atomico no nivel do sistema de arquivos: quem cria, ganha.
             with open(self.path, "x", encoding="utf-8") as fh:
                 fh.write(conteudo)
+            return self
         except FileExistsError:
-            try:
-                dono = json.loads(self.path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                dono = {}
+            pass
+
+        try:
+            dono = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            dono = {}
+
+        motivo = _trava_orfa(dono)
+        if motivo is None:
             raise TravaOcupada(
-                f"ja ha uma corrida de '{self.etapa}' neste instrumento.\n"
+                f"ja ha uma corrida VIVA de '{self.etapa}' neste instrumento.\n"
                 f"   dono: pid {dono.get('pid', '?')}, desde {dono.get('inicio_utc', '?')}\n"
                 f"   trava: {self.path}\n\n"
                 "   Duas corridas sobre o mesmo diretorio se sabotam: a Dukascopy\n"
                 "   limita por conexao concorrente, e as duas passam a falhar mais.\n"
-                "   Se a outra corrida ja morreu, apague a trava a mao."
+                "   Espere a outra terminar, ou pare o processo acima."
             ) from None
+
+        # Orfa: assume, e diz em voz alta. Assumir em silencio esconderia que
+        # uma corrida anterior morreu no meio, que e informacao.
+        print(f"    trava orfa assumida: {motivo}", flush=True)
+        self.path.write_text(conteudo, encoding="utf-8")
+        self.orfa_assumida = motivo
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -417,10 +515,16 @@ def etapa_completude(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, 
 def etapa_download(instrumento: str, ano: int, mes: int, log: JsonlLogger, *, force: bool) -> dict:
     """Baixa o mes ate CONVERGIR, nao uma vez.
 
-    Uma passada nunca fecha um mes: hora que esgota as tentativas por rede nao
-    deixa arquivo nem marcador, e fica como buraco silencioso. Em dezessete mil
-    horas isso vira centenas de buracos, e "rodar de novo ate parar de mudar"
-    nao pode ser procedimento manual.
+    Uma passada pode nao fechar um mes: hora que esgota as tentativas por rede
+    nao deixa arquivo nem marcador, e fica como buraco silencioso. "Rodar de novo
+    ate parar de mudar" nao pode ser procedimento manual quando sao dois anos.
+
+    QUANTOS buracos esperar ainda nao se sabe. A primeira estimativa saiu de uma
+    corrida contaminada — dois downloaders concorrentes sobre o mesmo diretorio,
+    condicao que o proprio config/feeds/dukascopy.yaml documenta como capaz de
+    derrubar o sucesso para um oitavo. Os 503 e timeouts observados falam dessa
+    condicao, nao do regime serial limpo. A taxa real esta por medir; ate la, o
+    laco existe porque a falha e POSSIVEL, e nao porque se saiba que e frequente.
 
     Tres desfechos de parada, e a diferenca entre eles importa:
 
