@@ -64,7 +64,32 @@ class OhlcDiff:
 
     @property
     def max_geral(self) -> float:
+        """Maior divergencia absoluta, em USD por onca.
+
+        CUIDADO: `0.0` tem dois significados — nenhuma divergencia, ou nenhuma
+        comparacao. Sempre leia junto com `comparou`.
+        """
         return max(self.max_abs.values()) if self.max_abs else 0.0
+
+    @property
+    def comparou(self) -> bool:
+        """Houve ao menos um rotulo em comum para comparar.
+
+        Existe porque `max_geral == 0.0` sem rotulos comuns pareceria um
+        resultado perfeito, quando na verdade nada foi verificado. E a mesma
+        armadilha do invariante 10, um nivel abaixo: verde que nao distingue
+        'nao ha achado' de 'nao consigo achar'.
+        """
+        return self.comuns > 0
+
+    def exigir_comparacao(self) -> None:
+        """Levanta se nada foi comparado. Use antes de declarar aprovacao."""
+        if not self.comparou:
+            raise ValueError(
+                f"nenhum rotulo em comum: {self.so_nossas} barras so nossas, "
+                f"{self.so_referencia} so da referencia. Divergencia zero aqui "
+                "significa que nada foi comparado, nao que esta tudo certo."
+            )
 
 
 def reference_url(cfg: FeedConfig, instrument: str, year: int, month: int) -> str:
