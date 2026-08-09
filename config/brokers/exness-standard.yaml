@@ -40,7 +40,18 @@ swap:
 server:
   daily_break: "20:58-22:00"
   sunday_open: "22:01"
-  timezone_offset: VERIFICAR         # derivar da âncora acima
+  # MEDIDO em 2026-08-09, nao derivado nem assumido. 271.380 pares de ticks
+  # Exness x Dukascopy em 2026-07-15: a dispersao de preco cai para 0,13 USD/oz
+  # em +0h e fica entre 5 e 16 nos demais offsets — minimo isolado por duas
+  # ordens de grandeza, nao escolha entre candidatos proximos.
+  #
+  # Consequencias diretas: a pausa 20:58-22:00 do servidor E 20:58-22:00 UTC, e
+  # o rollover das 22:00 do servidor e 22:00 UTC.
+  #
+  # AINDA POR VERIFICAR: se o offset muda com horario de verao. A medicao cobre
+  # um unico dia de julho. Repetir em janeiro decide, e ate la nao assumir que
+  # a constante vale o ano inteiro.
+  timezone_offset: 0
 
 policy:
   scalping_allowed: true             # VERIFICAR nos termos da corretora
