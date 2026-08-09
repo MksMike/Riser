@@ -413,7 +413,7 @@ def avaliar(
     swap_acum: np.ndarray,
     *,
     cobertura_ns: int,
-    horizontes: tuple[float, ...] = HORIZONTES_H,
+    horizontes: tuple[float, ...] | None = None,
 ) -> Resultado:
     """MAE, tempo-ate-verde e nao-virou de uma posicao aberta na barra `idx0`.
 
@@ -427,6 +427,10 @@ def avaliar(
     daquele horizonte, e o numero de censuradas e reportado — silenciar isso
     faria a fracao parecer medida quando esta truncada.
     """
+    # Resolvido em runtime, nao no default do parametro: default e ligado na
+    # DEFINICAO da funcao, entao `--horizontes-h` nao chegaria aqui e o estudo
+    # rodaria com os horizontes antigos sem nada indicar.
+    horizontes = horizontes or HORIZONTES_H
     teto_ns = int(serie.ts_ns[idx0] + max(horizontes) * 3.6e12)
     fim = int(np.searchsorted(serie.ts_ns, teto_ns, side="right"))
     if fim <= idx0:
@@ -1140,7 +1144,20 @@ def main(argv: list[str] | None = None) -> int:
              "O relatorio traz a contagem em varios gaps para mostrar a escala.",
     )
     p.add_argument("--seed", type=int, default=20260808)
+    p.add_argument(
+        "--horizontes-h", type=float, nargs="+", metavar="H",
+        help="horizontes em horas para 'nao virou' e para o teto do MAE. "
+             "O padrao (24 72 168) pressupoe posicao mantida por dias. Medir "
+             "'nao virou em 1 semana' sobre operacoes cuja mediana de duracao e "
+             "de segundos descreve um comportamento que nao existe — e o "
+             "horizonte maximo tambem define quanto historico cada barra do pool "
+             "precisa ter pela frente, entao um horizonte grande demais esvazia "
+             "o pool e o estudo nem roda.",
+    )
     args = p.parse_args(argv)
+
+    if args.horizontes_h:
+        globals()["HORIZONTES_H"] = tuple(sorted(args.horizontes_h))
 
     if args.self_test:
         return autoteste()
