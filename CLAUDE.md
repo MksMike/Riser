@@ -14,6 +14,28 @@ EAs orquestram sensores. O Guardian veta. O motor de saída executa saídas.
 O valor do projeto não está em nenhum sensor específico. Está na infraestrutura
 que permite testar e descartar sensores rápido.
 
+### O EA busca edge independente. O estilo manual não é especificação.
+
+Decidido em 2026-08-09. Era a decisão em aberto nº 1.
+
+O histórico manual não é alvo a replicar nem fonte de rótulo. Sensor não é
+avaliado por concordar com o dono — é avaliado pelos critérios do seu próprio
+documento, contra o mercado.
+
+Duas coisas decorrem disto, e valem mais que a decisão em si:
+
+- **Captura de operações manuais deixa de ser caminho crítico.** Ela existia
+  para produzir dado rotulado pelo julgamento do dono; sem esse consumidor, é
+  arquivo sem leitor.
+- **Um sensor que só funciona quando confirma o que o dono faria é sensor
+  reprovado**, não sensor validado.
+
+Evidência que acompanhou a decisão: o baseline aleatório casado, sobre 193
+entradas manuais reais, não encontrou edge de timing — P(real melhor) de 0,39
+contra sintéticas aleatórias e 0,47 casando por volatilidade, com o intervalo a
+cruzar 0,50. Amostra pequena demais para concluir, e é por isso que a decisão
+não se apoia nela: apoia-se em para onde o projeto vai.
+
 ### Modelo de camadas
 
 | | Camada | Pergunta que responde | Critério de saída |
@@ -341,24 +363,16 @@ nada. O usuário é o dono do projeto até o sistema estar validado em conta rea
 
 Não assuma resposta para nenhuma destas. Pergunte.
 
-1. O EA deve replicar o estilo manual do dono, ou buscar edge independente?
-   Muda contra o que os sensores são avaliados. **Continua aberta de propósito:**
-   há um experimento barato que a decide antes da escolha — as entradas reais
-   contra sintéticas casadas, medidas por MAE e tempo-até-verde
-   (`lab/baseline_casado.py`). Se as reais forem indistinguíveis das sintéticas,
-   o resultado vem de capital e paciência, não de timing, e replicar entrada
-   deixa de ser opção. Fechar antes de rodar seria escolher no escuro uma
-   pergunta que o dado já responde.
-2. **Margem compartilhada.** O EA vai rodar na mesma conta em que o dono opera à
+1. **Margem compartilhada.** O EA vai rodar na mesma conta em que o dono opera à
    mão, separado por magic number — isso está decidido. O que não está: as
    posições manuais não têm stop e consomem margem de forma imprevisível, e
    podem liquidar as posições do EA sem que nada no EA tenha errado. O Guardian
    enxerga apenas o que é dele. Não resolvido, e não assumir resolução.
-3. Coleta contínua de ticks: VPS, PC sempre ligado, ou aceitar lacunas?
-4. BTCUSD opera 24/7 e quebra a normalização por horário do SVC. Assumir
+2. Coleta contínua de ticks: VPS, PC sempre ligado, ou aceitar lacunas?
+3. BTCUSD opera 24/7 e quebra a normalização por horário do SVC. Assumir
    estrutura de sessão ou generalizar agora?
-5. Backup do `RISER-data`. Dado de tick perdido é insubstituível.
-6. Como distinguir **ausência esperada** de **feed morto**. Durante a pausa
+4. Backup do `RISER-data`. Dado de tick perdido é insubstituível.
+5. Como distinguir **ausência esperada** de **feed morto**. Durante a pausa
    diária nenhum tick chega, nenhuma barra fecha e `freshness_ms` cresce sem
    parar — indistinguível de queda de conexão, e as duas pedem reações opostas:
    esperar numa, parar tudo na outra. Ver `docs/decisions/0008-*`.
